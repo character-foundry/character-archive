@@ -19,7 +19,9 @@
     "sync:search": "node scripts/sync-meilisearch.js",
     "fix:flags": "node scripts/fix-feature-flags.js",
     "vector:backfill": "node scripts/etl_cards_vector_search.js",
-    "vector:flush": "node scripts/flush-vector-indexes.js"
+    "vector:flush": "node scripts/flush-vector-indexes.js",
+    "vector:embedders": "node scripts/ensure-vector-embedders.js",
+    "optimize:pngs": "node scripts/optimize-pngs.js"
   },
   "keywords": [
     "chub",
@@ -55,6 +57,7 @@
     "png-chunk-text": "^1.0.0",
     "png-chunks-encode": "^1.0.0",
     "png-chunks-extract": "^1.0.0",
+    "sharp": "^0.33.5",
     "sqlite3": "^5.1.7",
     "unzipper": "^0.12.3"
   },

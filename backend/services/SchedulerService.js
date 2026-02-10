@@ -5,6 +5,8 @@ import { syncCharacterTavern } from './scrapers/CtScraper.js';
 import { drainSearchIndexQueue, isSearchIndexEnabled } from './search-index.js';
 import { computeDailySnapshot } from './MetricsService.js';
 import { lockService } from './LockService.js';
+import { scheduleVectorBackfill } from './VectorBackfillService.js';
+import { scheduleOptimization } from './PngOptimizationService.js';
 import { getDatabase } from '../database.js';
 import { logger } from '../utils/logger.js';
 
@@ -55,6 +57,8 @@ class SchedulerService {
                 });
                 console.log('[INFO] Auto-update complete');
                 await drainSearchIndexQueue('auto-update');
+                scheduleVectorBackfill('auto-update');
+                scheduleOptimization('auto-update');
             } catch (error) {
                 log.error('Auto-update failed', error);
             } finally {
@@ -95,6 +99,8 @@ class SchedulerService {
                 });
                 console.log('[INFO] Character Tavern auto-sync complete');
                 await drainSearchIndexQueue('ct-auto-sync');
+                scheduleVectorBackfill('ct-auto-sync');
+                scheduleOptimization('ct-auto-sync');
             } catch (error) {
                 log.error('Character Tavern auto-sync failed', error);
             } finally {
