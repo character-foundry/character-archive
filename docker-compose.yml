@@ -13,8 +13,6 @@
 #   3. Create config.json (or let container create default)
 #   4. Run: docker compose up -d
 
-version: '3.8'
-
 services:
   # ==========================================================================
   # Character Archive Application
@@ -63,20 +61,28 @@ services:
   # Meilisearch - Full-text search engine
   # ==========================================================================
   meilisearch:
-    image: getmeili/meilisearch:v1.11
-    container_name: meilisearch
+    image: getmeili/meilisearch:v1.40.0
+    container_name: localchub-meilisearch
     ports:
       - "${MEILI_PORT:-7700}:7700"
     volumes:
-      - ./meili-data:/meili_data
+      - ./data.ms:/meili_data/data.ms
+      - ./dumps:/meili_data/dumps
+      - ./snapshots:/meili_data/snapshots
     environment:
       - MEILI_ENV=production
       - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-}
       - MEILI_NO_ANALYTICS=true
+      - MEILI_DB_PATH=/meili_data/data.ms
+      - MEILI_DUMP_DIR=/meili_data/dumps
+      - MEILI_SNAPSHOT_DIR=/meili_data/snapshots
+      - MEILI_MAX_INDEXING_MEMORY=24GiB
       # Increase payload limit for batch indexing
       - MEILI_HTTP_PAYLOAD_SIZE_LIMIT=104857600
+    mem_limit: 32g
+    memswap_limit: 32g
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7700/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:7700/health"]
       interval: 10s
       timeout: 5s
       retries: 5

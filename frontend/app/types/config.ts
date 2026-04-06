@@ -37,6 +37,7 @@ export const defaultCtSyncState = {
 
 export const defaultVectorSearchState = {
     enabled: false,
+    enableChunks: true,
     cardsIndex: 'cards_vsem',
     chunksIndex: 'card_chunks',
     embedModel: 'snowflake-arctic-embed2:latest',

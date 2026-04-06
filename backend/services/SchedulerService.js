@@ -124,6 +124,9 @@ class SchedulerService {
         }
 
         this.searchIndexQueueTimer = setInterval(() => {
+            if (lockService.isSyncInProgress() || lockService.isCtSyncInProgress()) {
+                return;
+            }
             drainSearchIndexQueue('interval');
         }, this.SEARCH_INDEX_QUEUE_INTERVAL_MS);
     }

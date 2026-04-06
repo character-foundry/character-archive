@@ -10,7 +10,7 @@ This project allows you to mirror character cards from multiple sources ([Chub.a
 *   **Offline-First:** Downloads character cards (PNGs + JSON) and caches all gallery images/external assets locally.
 *   **Advanced Search:**
     *   **SQL Search:** Fast filtering by tags, author, tokens, dates, and flags.
-    *   **Semantic Vector Search:** (Optional) Use Ollama + Meilisearch to find characters by "vibe" or description, even if keywords don't match. Supports searching specific chunks of character definitions.
+    *   **Semantic Vector Search:** (Optional) Use Ollama + Meilisearch to find characters by "vibe" or description, even if keywords don't match. Whole-card semantic search is the baseline; chunk vectors are optional if you also want snippet-level semantic matches.
     *   **Boolean Logic:** Full support for `AND`, `OR`, `NOT`, and parenthetical grouping in search queries.
 *   **Integrations:**
     *   **SillyTavern:** One-click push to a running SillyTavern instance. Tracks which cards are already loaded.
@@ -25,7 +25,7 @@ This project allows you to mirror character cards from multiple sources ([Chub.a
 *   **Node.js:** Version 20 or higher.
 *   **pnpm:** Package manager (required for workspace dependencies).
 *   **SQLite:** (Bundled with Node.js drivers, no separate install usually needed).
-*   **Meilisearch (Optional):** Version 1.5+ (Required for advanced/vector search and Character Tavern sync).
+*   **Meilisearch (Optional):** Version 1.40+ recommended (required for advanced/vector search and Character Tavern sync).
 *   **Ollama (Optional):** Required only for semantic vector search embedding generation.
 
 ### Dependencies
@@ -113,10 +113,14 @@ The application relies on a `config.json` file. You can bootstrap this by copyin
         ```json
         "vectorSearch": {
             "enabled": true,
+            "enableChunks": false,
+            "cardsIndex": "cards_vsem",
+            "chunksIndex": "card_chunks",
             "ollamaUrl": "http://127.0.0.1:11434",
             "embedModel": "snowflake-arctic-embed2:latest"
         }
         ```
+        `enableChunks: false` gives you the lower-overhead whole-card semantic index only. Set it to `true` if you also want the optional `card_chunks` index for semantic snippets and chunk reranking.
 
 ### 4. Running the Application
 
@@ -146,7 +150,7 @@ cd /path/to/character-foundry
 # Set up environment
 cd character-archive
 cp .env.example .env
-mkdir -p static meili-data
+mkdir -p static data.ms dumps snapshots
 touch cards.db
 
 # Start services
@@ -157,6 +161,8 @@ Access the application:
 *   **Frontend:** http://localhost:3177
 *   **Backend API:** http://localhost:6969
 *   **Meilisearch:** http://localhost:7700
+
+The shipped Compose stack currently pins Meilisearch to `v1.40.0`, caps it at `32 GiB` RAM, and sets `MEILI_MAX_INDEXING_MEMORY=24GiB` to avoid the runaway-memory behavior seen in earlier uncapped deployments.
 
 For detailed Docker configuration, see [docker/README.md](docker/README.md).
 
@@ -221,13 +227,21 @@ To ensure your archive is truly offline:
     ```bash
     ollama pull snowflake-arctic-embed2
     ```
-3.  Enable `vectorSearch` in `config.json` and restart the server.
-4.  **Important:** You must populate the embeddings index:
+3.  Enable `vectorSearch` in `config.json` and choose whether chunk vectors are enabled:
+    *   `enableChunks: false` = lower footprint, whole-card semantic search only.
+    *   `enableChunks: true` = builds both `cards_vsem` and `card_chunks`, enabling semantic snippets/chunk reranking.
+4.  Restart the server.
+5.  **Important:** You must populate the embeddings index:
     ```bash
     pnpm vector:flush
     pnpm vector:backfill
     ```
     *This process reads all your cards, generates embeddings via Ollama, and uploads them to Meilisearch. It may take a long time.*
+    *`pnpm vector:backfill` now honors `vectorSearch.enableChunks`. If chunks are disabled, it will not recreate `card_chunks`.*
+6.  If you only want to remove chunk vectors while keeping whole-card vectors, run:
+    ```bash
+    pnpm vector:flush -- --chunks-only
+    ```
 
 ### Maintenance Scripts
 *   `pnpm update-metadata`: Refreshes metadata for all local cards from their JSON files.
@@ -259,6 +273,8 @@ pnpm dev 2>&1 | grep '\[SYNC\]'
     Refreshing Character Tavern cards is not supported individually (only bulk sync). The UI will now warn you instead of crashing.
 *   **Meilisearch Errors:**
     If searches fail, ensure Meilisearch is running. If you recently changed schema, run `pnpm sync:search`.
+*   **`card_chunks` Missing:**
+    If `vectorSearch.enableChunks` is `false`, a missing `card_chunks` index is expected. Whole-card vector search still works; re-enable chunks and rerun `pnpm vector:backfill` only if you want semantic snippets/chunk reranking back.
 *   **"Missing Config":**
     If the app crashes complaining about config, ensure `config.json` exists and contains valid JSON. Validate your API keys.
 

@@ -5,7 +5,7 @@ This guide covers running Character Archive using Docker and Docker Compose.
 ## Prerequisites
 
 - Docker 20.10+ and Docker Compose v2
-- ~2GB RAM minimum (4GB+ recommended for Meilisearch)
+- Enough RAM for your chosen Meilisearch cap. The bundled compose file currently caps Meilisearch at `32 GiB` and sets `MEILI_MAX_INDEXING_MEMORY=24GiB`.
 - Storage for your card collection (varies by usage)
 
 ## Quick Start
@@ -29,7 +29,7 @@ cp .env.example .env
 ### 3. Create data directories
 
 ```bash
-mkdir -p static meili-data
+mkdir -p static data.ms dumps snapshots
 touch cards.db
 ```
 
@@ -72,6 +72,9 @@ The container creates a default `config.json` on first run. To customize:
     },
     "vectorSearch": {
         "enabled": false,
+        "enableChunks": false,
+        "cardsIndex": "cards_vsem",
+        "chunksIndex": "card_chunks",
         "ollamaUrl": "http://host.docker.internal:11434",
         "embedModel": "snowflake-arctic-embed2:latest"
     },
@@ -89,6 +92,8 @@ The container creates a default `config.json` on first run. To customize:
 ```
 
 2. Mount it as read-only in docker-compose.yml (already configured)
+
+`enableChunks: false` keeps vector search on the whole-card index only. Set it to `true` if you also want semantic snippets/chunk reranking via the optional `card_chunks` index.
 
 ### Environment Variables
 
@@ -108,7 +113,9 @@ The container creates a default `config.json` on first run. To customize:
 | `/app/static` | `./static` | Card images and JSON files |
 | `/app/cards.db` | `./cards.db` | SQLite database |
 | `/app/config.json` | `./config.json` | Application configuration |
-| `/meili_data` | `./meili-data` | Meilisearch index data |
+| `/meili_data/data.ms` | `./data.ms` | Meilisearch database files |
+| `/meili_data/dumps` | `./dumps` | Meilisearch dumps |
+| `/meili_data/snapshots` | `./snapshots` | Meilisearch snapshots |
 
 ## Using with Ollama
 
@@ -218,6 +225,9 @@ docker exec character-archive node scripts/sync-meilisearch.js
 
 # Vector backfill (if Ollama configured)
 docker exec character-archive node scripts/etl_cards_vector_search.js
+
+# Remove only the optional chunk vector index/artifacts
+docker exec character-archive node scripts/flush-vector-indexes.js --chunks-only
 ```
 
 ## Troubleshooting
@@ -248,6 +258,7 @@ Common issues:
        "host": "http://meilisearch:7700"
    }
    ```
+3. If `vectorSearch.enableChunks` is `false`, `card_chunks` being absent is expected. Whole-card semantic search still works without that index.
 
 ### Can't connect from other machines
 

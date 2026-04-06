@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { MeiliSearch } from 'meilisearch';
 import { initDatabase, getDatabase } from '../backend/database.js';
 import { loadConfig } from '../config.js';
 import { readCardPngSpec, getCardFilePaths } from '../backend/utils/card-utils.js';
@@ -15,6 +16,7 @@ const config = loadConfig();
 const DEFAULT_OLLAMA_URL = process.env.OLLAMA_URL || config.vectorSearch?.ollamaUrl || 'http://127.0.0.1:11434';
 const EMBED_MODEL = process.env.EMBED_MODEL || config.vectorSearch?.embedModel || 'snowflake-arctic-embed2:latest';
 const EMBEDDER_NAME = process.env.MEILI_EMBEDDER || config.vectorSearch?.embedderName || 'arctic2-1024';
+const EMBED_DIMENSIONS = Number(process.env.EMBED_DIMENSIONS || config.vectorSearch?.embedDimensions || 0);
 const CHUNK_TOKEN_THRESHOLD = Number(process.env.CHUNK_TOKEN_THRESHOLD || 300);
 const CHUNK_TARGET_CHARS = Number(process.env.CHUNK_CHAR_TARGET || 1200);
 const CHUNK_CHAR_OVERLAP = Number(process.env.CHUNK_CHAR_OVERLAP || 300);
@@ -23,6 +25,18 @@ const LOG_EVERY = Number(process.env.LOG_EVERY || 25);
 const CARD_LIMIT = process.env.LCR_VECTOR_LIMIT ? Number(process.env.LCR_VECTOR_LIMIT) : null;
 const START_AFTER = process.env.LCR_VECTOR_START_AFTER ? Number(process.env.LCR_VECTOR_START_AFTER) : null;
 const FORCE_REEMBED = process.env.LCR_VECTOR_FORCE === '1';
+const VERIFY_DOCS = process.env.LCR_VECTOR_VERIFY === '1';
+const QUEUE_MODE = process.env.LCR_VECTOR_QUEUE === '1';
+const QUEUE_BATCH = process.env.LCR_VECTOR_QUEUE_BATCH ? Number(process.env.LCR_VECTOR_QUEUE_BATCH) : null;
+const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 120000);
+const OLLAMA_RETRIES = Number(process.env.OLLAMA_RETRIES || 2);
+const OLLAMA_RETRY_BACKOFF_MS = Number(process.env.OLLAMA_RETRY_BACKOFF_MS || 1000);
+const OLLAMA_SPLIT_DEPTH = Number(process.env.OLLAMA_SPLIT_DEPTH || 4);
+const EMBED_BATCH_SIZE = Number(process.env.OLLAMA_EMBED_BATCH || config.vectorSearch?.embedBatchSize || 0);
+const IDS_FILTER = process.env.LCR_VECTOR_IDS || '';
+const DELETE_IDS_FILTER = process.env.LCR_VECTOR_DELETE_IDS || '';
+const QUEUE_ROW_IDS_FILTER = process.env.LCR_VECTOR_QUEUE_IDS || '';
+const ENABLE_CHUNK_INDEX = readBooleanFlag(process.env.MEILI_ENABLE_CHUNKS, config.vectorSearch?.enableChunks !== false);
 
 // Support multiple Ollama instances via comma-separated URLs in config or env var
 const SECONDARY_OLLAMA_URL = process.env.OLLAMA_URL_SECONDARY || config.vectorSearch?.ollamaUrlSecondary || null;
@@ -32,10 +46,15 @@ let OLLAMA_INSTANCES = [DEFAULT_OLLAMA_URL];
 let ollamaRoundRobin = 0;
 const MEILI_HOST = (process.env.MEILI_HOST || config.meilisearch.host || '').replace(/\/$/, '');
 const MEILI_KEY = process.env.MEILI_KEY || config.meilisearch.apiKey || '';
-const CARDS_INDEX = process.env.MEILI_CARDS_INDEX || 'cards_vsem';
-const CHUNKS_INDEX = process.env.MEILI_CHUNKS_INDEX || 'card_chunks';
+const CARDS_INDEX = process.env.MEILI_CARDS_INDEX || config.vectorSearch?.cardsIndex || 'cards_vsem';
+const CHUNKS_INDEX = process.env.MEILI_CHUNKS_INDEX || config.vectorSearch?.chunksIndex || 'card_chunks';
 const DEBUG_DUMP_DIR = process.env.VECTOR_DEBUG_DIR || null;
 let debugDocCounter = 0;
+let forceReembedAll = FORCE_REEMBED;
+let forceChunkReembed = FORCE_REEMBED;
+let verifyCardDocs = VERIFY_DOCS;
+let cardsIndexClient = null;
+let chunksIndexClient = null;
 
 if (!MEILI_HOST || !MEILI_KEY) {
     console.error('[FATAL] Missing Meilisearch host or API key. Set MEILI_HOST/MEILI_KEY or config.meilisearch.');
@@ -46,6 +65,8 @@ if (typeof fetch !== 'function') {
     console.error('[FATAL] Global fetch is unavailable. Run on Node.js 18+ or polyfill fetch.');
     process.exit(1);
 }
+
+const meiliClient = new MeiliSearch({ host: MEILI_HOST, apiKey: MEILI_KEY });
 
 const jsonHeaders = {
     'Content-Type': 'application/json',
@@ -60,6 +81,45 @@ const stats = {
     chunkUpdates: 0,
     chunkDeletes: 0
 };
+
+const CARD_SELECT_FIELDS = [
+    'id',
+    'name',
+    'tagline',
+    'description',
+    'topics',
+    'tokenCount',
+    'tokenDescriptionCount',
+    'tokenPersonalityCount',
+    'tokenScenarioCount',
+    'tokenMesExampleCount',
+    'tokenFirstMessageCount',
+    'tokenSystemPromptCount',
+    'tokenPostHistoryCount',
+    'author',
+    'language',
+    'source',
+    'sourceId',
+    'sourcePath',
+    'sourceUrl',
+    'visibility',
+    'favorited',
+    'hasAlternateGreetings',
+    'hasLorebook',
+    'hasEmbeddedLorebook',
+    'hasLinkedLorebook',
+    'hasExampleDialogues',
+    'hasSystemPrompt',
+    'hasGallery',
+    'isFuzzed',
+    'lastModified',
+    'createdAt',
+    'nChats',
+    'nMessages',
+    'n_favorites',
+    'starCount',
+    'fullPath'
+].join(', ');
 
 function approxTokenCount(text = '') {
     if (!text) return 0;
@@ -86,6 +146,144 @@ function splitTopics(topics) {
         .split(',')
         .map(t => t.trim())
         .filter(Boolean);
+}
+
+function splitArray(items, size) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return [];
+    }
+    if (!Number.isFinite(size) || size <= 0 || size >= items.length) {
+        return [items];
+    }
+    const batches = [];
+    for (let i = 0; i < items.length; i += size) {
+        batches.push(items.slice(i, i + size));
+    }
+    return batches;
+}
+
+function parseIdList(value) {
+    if (!value) return [];
+    const raw = Array.isArray(value) ? value.join(',') : String(value);
+    const tokens = raw.split(/[,\s]+/).map(token => token.trim()).filter(Boolean);
+    return Array.from(new Set(tokens));
+}
+
+function readBooleanFlag(value, fallback = false) {
+    if (value === undefined || value === null || value === '') {
+        return fallback;
+    }
+    const normalized = String(value).trim().toLowerCase();
+    return !['0', 'false', 'no', 'off'].includes(normalized);
+}
+
+function isIndexMissing(error) {
+    const message = String(error?.message || '');
+    return message.includes('index_not_found') || message.includes('not found');
+}
+
+function isAbortError(error) {
+    return error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || String(error?.message || '').includes('aborted');
+}
+
+function isRetryableOllamaError(error) {
+    if (isAbortError(error)) return true;
+    const message = String(error?.message || '');
+    return /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|503|504/i.test(message);
+}
+
+function shouldSplitBatch(error) {
+    const message = String(error?.message || '');
+    return isAbortError(error) || /413|payload too large|request entity too large/i.test(message);
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function ensureIndex(indexUid, primaryKey = 'id') {
+    if (!indexUid) {
+        throw new Error('Missing index UID');
+    }
+    try {
+        await meiliClient.getIndex(indexUid);
+    } catch (error) {
+        if (!isIndexMissing(error)) {
+            throw error;
+        }
+        await meiliClient.createIndex(indexUid, { primaryKey });
+    }
+    return meiliClient.index(indexUid);
+}
+
+async function ensureEmbedderSettings(indexUid, dimensions) {
+    if (!indexUid) return;
+    if (!EMBEDDER_NAME) {
+        console.warn('[WARN] No embedder name configured; skipping embedder settings.');
+        return;
+    }
+    if (!Number.isFinite(dimensions) || dimensions <= 0) {
+        console.warn(`[WARN] Embed dimensions missing for ${indexUid}; skipping embedder settings.`);
+        return;
+    }
+    const index = await ensureIndex(indexUid, 'id');
+    let settings = {};
+    try {
+        settings = await index.getSettings();
+    } catch (error) {
+        console.warn(`[WARN] Failed to read settings for ${indexUid}: ${error?.message || error}`);
+    }
+    const embedders = settings?.embedders || {};
+    const current = embedders[EMBEDDER_NAME];
+    const currentDims = Number(current?.dimensions);
+    if (current && Number.isFinite(currentDims) && currentDims === dimensions) {
+        return;
+    }
+    const task = await index.updateSettings({
+        embedders: {
+            ...embedders,
+            [EMBEDDER_NAME]: {
+                source: 'userProvided',
+                dimensions
+            }
+        }
+    });
+    const taskId = task?.taskUid ?? task?.uid;
+    console.log(`[INFO] Scheduled embedder "${EMBEDDER_NAME}" for ${indexUid} (${dimensions}d)${taskId ? ` task ${taskId}` : ''}`);
+}
+
+function isDocumentMissing(error) {
+    const message = String(error?.message || '');
+    return message.includes('document_not_found') || message.includes('not found');
+}
+
+async function cardDocHasVectors(cardId, expectedSections = []) {
+    if (!cardsIndexClient) {
+        return true;
+    }
+    try {
+        const doc = await cardsIndexClient.getDocument(String(cardId), {
+            fields: ['id', 'vector_sections']
+        });
+        const sections = Array.isArray(doc?.vector_sections) ? doc.vector_sections : [];
+        if (!sections.length) {
+            return false;
+        }
+        if (expectedSections.length) {
+            const sectionSet = new Set(sections);
+            for (const section of expectedSections) {
+                if (!sectionSet.has(section)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    } catch (error) {
+        if (isDocumentMissing(error)) {
+            return false;
+        }
+        throw error;
+    }
 }
 
 function collectAlternateGreetings(specData = {}, metadata = {}) {
@@ -166,6 +364,66 @@ async function checkOllamaInstance(url) {
     }
 }
 
+async function requestEmbeddings(url, texts, timeoutMs) {
+    const body = JSON.stringify({ model: EMBED_MODEL, input: texts });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            signal: controller.signal
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`[OLLAMA ${url}] ${response.status} ${response.statusText} — ${errorText}`);
+        }
+        const payload = await response.json();
+        const vectors = payload?.embeddings;
+        if (!Array.isArray(vectors) || vectors.length !== texts.length) {
+            throw new Error('[OLLAMA] Embed response malformed or length mismatch');
+        }
+        return vectors;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+async function embedWithRetry(url, texts, { retries = OLLAMA_RETRIES, timeoutMs = OLLAMA_TIMEOUT_MS, fallbackUrl = null, depth = 0 } = {}) {
+    try {
+        return await requestEmbeddings(url, texts, timeoutMs);
+    } catch (error) {
+        const message = String(error?.message || '');
+        const retryable = isRetryableOllamaError(error);
+
+        if (texts.length > 1 && depth < OLLAMA_SPLIT_DEPTH && shouldSplitBatch(error)) {
+            const mid = Math.ceil(texts.length / 2);
+            const left = texts.slice(0, mid);
+            const right = texts.slice(mid);
+            console.warn(`[WARN] Ollama batch failed (${message}). Splitting ${texts.length} → ${left.length}+${right.length}`);
+            const leftVectors = await embedWithRetry(url, left, { retries, timeoutMs, fallbackUrl, depth: depth + 1 });
+            const rightVectors = await embedWithRetry(url, right, { retries, timeoutMs, fallbackUrl, depth: depth + 1 });
+            return [...leftVectors, ...rightVectors];
+        }
+
+        if (retryable && retries > 0) {
+            const attempt = OLLAMA_RETRIES - retries + 1;
+            const backoff = OLLAMA_RETRY_BACKOFF_MS * Math.pow(2, attempt - 1);
+            console.warn(`[WARN] Ollama request failed (${message}). Retrying in ${backoff}ms (attempt ${attempt}/${OLLAMA_RETRIES})`);
+            await sleep(backoff);
+            return embedWithRetry(url, texts, { retries: retries - 1, timeoutMs, fallbackUrl, depth });
+        }
+
+        if (fallbackUrl && fallbackUrl !== url) {
+            console.warn(`[WARN] Falling back to ${fallbackUrl} for failed Ollama batch: ${message}`);
+            return embedWithRetry(fallbackUrl, texts, { retries: OLLAMA_RETRIES, timeoutMs, fallbackUrl: null, depth });
+        }
+
+        throw error;
+    }
+}
+
 async function embedBatch(texts) {
     if (!texts.length) {
         return [];
@@ -175,23 +433,9 @@ async function embedBatch(texts) {
     const ollamaUrl = OLLAMA_INSTANCES[ollamaRoundRobin % OLLAMA_INSTANCES.length];
     ollamaRoundRobin++;
 
-    const body = JSON.stringify({ model: EMBED_MODEL, input: texts });
     const url = `${ollamaUrl}/api/embed`;
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body
-    });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`[OLLAMA] ${response.status} ${response.statusText} — ${errorText}`);
-    }
-    const payload = await response.json();
-    const vectors = payload?.embeddings;
-    if (!Array.isArray(vectors) || vectors.length !== texts.length) {
-        throw new Error('[OLLAMA] Embed response malformed or length mismatch');
-    }
-    return vectors;
+    const fallbackUrl = ollamaUrl !== DEFAULT_OLLAMA_URL ? `${DEFAULT_OLLAMA_URL}/api/embed` : null;
+    return embedWithRetry(url, texts, { fallbackUrl });
 }
 
 async function embedBatchParallel(texts) {
@@ -214,59 +458,29 @@ async function embedBatchParallel(texts) {
     // Embed in parallel across instances with retry and fallback
     const promises = chunks.map(async (chunk, idx) => {
         const ollamaUrl = OLLAMA_INSTANCES[idx % OLLAMA_INSTANCES.length];
-        const body = JSON.stringify({ model: EMBED_MODEL, input: chunk });
         const url = `${ollamaUrl}/api/embed`;
-
-        // Try with extended timeout (60s for large batches)
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body,
-                signal: controller.signal
-            });
-
-            clearTimeout(timeoutId);
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`[OLLAMA ${ollamaUrl}] ${response.status} ${response.statusText} — ${errorText}`);
-            }
-            const payload = await response.json();
-            return payload?.embeddings || [];
-        } catch (error) {
-            // If secondary instance fails, fall back to primary for this chunk
-            if (ollamaUrl !== DEFAULT_OLLAMA_URL) {
-                console.warn(`[WARN] Secondary instance ${ollamaUrl} failed, falling back to primary for this batch: ${error.message}`);
-                const fallbackUrl = `${DEFAULT_OLLAMA_URL}/api/embed`;
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-                const response = await fetch(fallbackUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body,
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`[OLLAMA FALLBACK] ${response.status} ${response.statusText} — ${errorText}`);
-                }
-                const payload = await response.json();
-                return payload?.embeddings || [];
-            }
-            throw error;
-        }
+        const fallbackUrl = ollamaUrl !== DEFAULT_OLLAMA_URL ? `${DEFAULT_OLLAMA_URL}/api/embed` : null;
+        return embedWithRetry(url, chunk, { fallbackUrl });
     });
 
     const results = await Promise.all(promises);
     return results.flat();
+}
+
+async function embedTexts(texts) {
+    if (!texts.length) {
+        return [];
+    }
+    const batchSize = Number.isFinite(EMBED_BATCH_SIZE) && EMBED_BATCH_SIZE > 0
+        ? Math.floor(EMBED_BATCH_SIZE)
+        : texts.length;
+    const batches = splitArray(texts, batchSize);
+    const vectors = [];
+    for (const batch of batches) {
+        const batchVectors = await embedBatchParallel(batch);
+        vectors.push(...batchVectors);
+    }
+    return vectors;
 }
 
 async function meiliAddDocuments(indexUid, documents) {
@@ -404,40 +618,41 @@ async function handleCard(row, db) {
         }
     }
 
-    let cardNeedsUpdate = FORCE_REEMBED || staleCardMeta.length > 0 || cardSectionEntries.some(entry => {
+    let cardNeedsUpdate = forceReembedAll || staleCardMeta.length > 0 || cardSectionEntries.some(entry => {
         const key = `${entry.section}#-1`;
         const prev = cardMetaMap.get(key);
         return !prev || prev.textHash !== entry.hash;
     });
 
     const chunkSections = [];
-
-    if (altGreetings.length) {
-        altGreetings.forEach((greeting, idx) => {
-            const slices = splitIntoChunks(greeting, { target: CHUNK_TARGET_CHARS, overlap: CHUNK_CHAR_OVERLAP });
-            slices.forEach((slice, sliceIndex) => {
-                chunkSections.push({
-                    section: 'alt_greeting',
-                    text: slice.text,
-                    approxStart: slice.start,
-                    logicalIndex: `${idx}-${sliceIndex}`
+    if (ENABLE_CHUNK_INDEX) {
+        if (altGreetings.length) {
+            altGreetings.forEach((greeting, idx) => {
+                const slices = splitIntoChunks(greeting, { target: CHUNK_TARGET_CHARS, overlap: CHUNK_CHAR_OVERLAP });
+                slices.forEach((slice, sliceIndex) => {
+                    chunkSections.push({
+                        section: 'alt_greeting',
+                        text: slice.text,
+                        approxStart: slice.start,
+                        logicalIndex: `${idx}-${sliceIndex}`
+                    });
                 });
             });
-        });
-    }
+        }
 
-    for (const baseSection of baseSections) {
-        const tokenEstimate = approxTokenCount(baseSection.text);
-        if (tokenEstimate > CHUNK_TOKEN_THRESHOLD) {
-            const slices = splitIntoChunks(baseSection.text, { target: CHUNK_TARGET_CHARS, overlap: CHUNK_CHAR_OVERLAP });
-            slices.forEach((slice, sliceIndex) => {
-                chunkSections.push({
-                    section: baseSection.section,
-                    text: slice.text,
-                    approxStart: slice.start,
-                    logicalIndex: `${baseSection.section}-${sliceIndex}`
+        for (const baseSection of baseSections) {
+            const tokenEstimate = approxTokenCount(baseSection.text);
+            if (tokenEstimate > CHUNK_TOKEN_THRESHOLD) {
+                const slices = splitIntoChunks(baseSection.text, { target: CHUNK_TARGET_CHARS, overlap: CHUNK_CHAR_OVERLAP });
+                slices.forEach((slice, sliceIndex) => {
+                    chunkSections.push({
+                        section: baseSection.section,
+                        text: slice.text,
+                        approxStart: slice.start,
+                        logicalIndex: `${baseSection.section}-${sliceIndex}`
+                    });
                 });
-            });
+            }
         }
     }
 
@@ -476,17 +691,28 @@ async function handleCard(row, db) {
         }
     }
 
-    const chunkEmbedsNeeded = FORCE_REEMBED
+    const chunkEmbedsNeeded = ENABLE_CHUNK_INDEX && forceChunkReembed
         ? newChunkEntries
-        : newChunkEntries.filter(entry => {
-            const key = `${entry.section}#${entry.chunkIndex}`;
-            const prev = chunkMetaMap.get(key);
-            return !prev || prev.textHash !== entry.hash;
-        });
+        : ENABLE_CHUNK_INDEX
+            ? newChunkEntries.filter(entry => {
+                const key = `${entry.section}#${entry.chunkIndex}`;
+                const prev = chunkMetaMap.get(key);
+                return !prev || prev.textHash !== entry.hash;
+            })
+            : [];
 
     const chunkStructureChanged = chunkIdsToDelete.length > 0 || existingChunkRows.length !== newChunkEntries.length;
+    const shouldProcessChunks = ENABLE_CHUNK_INDEX
+        ? forceChunkReembed || chunkEmbedsNeeded.length > 0 || chunkIdsToDelete.length > 0 || chunkStructureChanged || chunkMetaRemovals.length > 0
+        : chunkIdsToDelete.length > 0 || existingChunkRows.length > 0 || chunkMetaRemovals.length > 0;
 
-    const shouldProcessChunks = FORCE_REEMBED || chunkEmbedsNeeded.length > 0 || chunkIdsToDelete.length > 0 || chunkStructureChanged;
+    if (!cardNeedsUpdate && !shouldProcessChunks && verifyCardDocs) {
+        const expectedSections = cardSectionEntries.map(entry => entry.section);
+        const hasVectors = await cardDocHasVectors(cardId, expectedSections);
+        if (!hasVectors) {
+            cardNeedsUpdate = true;
+        }
+    }
 
     if (!cardNeedsUpdate && !shouldProcessChunks) {
         stats.skipped += 1;
@@ -494,7 +720,7 @@ async function handleCard(row, db) {
     }
 
     if (cardNeedsUpdate) {
-        const vectors = await embedBatchParallel(cardSectionEntries.map(entry => entry.text));
+        const vectors = await embedTexts(cardSectionEntries.map(entry => entry.text));
         const cardDoc = {
             id: cardId,
             data: dataPayload,
@@ -565,7 +791,7 @@ async function handleCard(row, db) {
     }
 
     if (chunkEmbedsNeeded.length) {
-        const vectors = await embedBatchParallel(chunkEmbedsNeeded.map(entry => entry.text));
+        const vectors = await embedTexts(chunkEmbedsNeeded.map(entry => entry.text));
         const docs = chunkEmbedsNeeded.map((entry, idx) => ({
             id: entry.id,
             card_id: cardId,
@@ -646,8 +872,73 @@ async function handleCard(row, db) {
     }
 }
 
+async function deleteVectorDocs(cardId, db) {
+    try {
+        await meiliDeleteDocuments(CARDS_INDEX, [cardId]);
+    } catch (error) {
+        console.warn(`[WARN] Failed to delete vector card doc ${cardId}: ${error?.message || error}`);
+    }
+
+    try {
+        const chunkIds = db.prepare('SELECT id FROM card_chunk_map WHERE cardId = ?').all(cardId).map(row => row.id);
+        if (chunkIds.length) {
+            await meiliDeleteDocuments(CHUNKS_INDEX, chunkIds);
+        }
+    } catch (error) {
+        console.warn(`[WARN] Failed to delete vector chunk docs for ${cardId}: ${error?.message || error}`);
+    }
+}
+
+async function processRows(rows, db, totalOverride = null) {
+    const total = Number.isFinite(totalOverride) ? totalOverride : rows.length;
+    for (const row of rows) {
+        if (CARD_LIMIT && stats.processed >= CARD_LIMIT) {
+            break;
+        }
+        await handleCard(row, db);
+        stats.processed += 1;
+        if (stats.processed % LOG_EVERY === 0) {
+            console.log(`[INFO] Processed ${stats.processed}/${CARD_LIMIT || total} cards — updated cards: ${stats.cardUpdates}, chunk upserts: ${stats.chunkUpdates}, chunk deletes: ${stats.chunkDeletes}, skipped: ${stats.skipped}`);
+        }
+    }
+}
+
+async function processCardIds(cardIds, db) {
+    const uniqueIds = Array.from(new Set(cardIds.map(id => String(id)).filter(Boolean)));
+    const total = uniqueIds.length;
+    if (!total) return;
+    const chunkSize = 900;
+    const batches = splitArray(uniqueIds, chunkSize);
+    for (const batch of batches) {
+        const placeholders = batch.map(() => '?').join(', ');
+        const rows = db.prepare(
+            `SELECT ${CARD_SELECT_FIELDS} FROM cards WHERE id IN (${placeholders}) ORDER BY id ASC`
+        ).all(...batch);
+        if (rows.length) {
+            await processRows(rows, db, total);
+        }
+    }
+}
+
+function resolveQueueBatchSize() {
+    if (Number.isFinite(QUEUE_BATCH) && QUEUE_BATCH > 0) {
+        return Math.floor(QUEUE_BATCH);
+    }
+    if (Number.isFinite(CARD_LIMIT) && CARD_LIMIT > 0) {
+        return Math.floor(CARD_LIMIT);
+    }
+    return 1000;
+}
+
 async function main() {
-    console.log(`[INFO] Starting vector ETL into ${CARDS_INDEX} / ${CHUNKS_INDEX}`);
+    console.log(`[INFO] Starting vector ETL into ${CARDS_INDEX}${ENABLE_CHUNK_INDEX ? ` / ${CHUNKS_INDEX}` : ' (chunks disabled)'}`);
+
+    await ensureEmbedderSettings(CARDS_INDEX, EMBED_DIMENSIONS);
+    cardsIndexClient = await ensureIndex(CARDS_INDEX, 'id');
+    if (ENABLE_CHUNK_INDEX) {
+        await ensureEmbedderSettings(CHUNKS_INDEX, EMBED_DIMENSIONS);
+        chunksIndexClient = await ensureIndex(CHUNKS_INDEX, 'id');
+    }
 
     // Check for secondary Ollama instance
     if (SECONDARY_OLLAMA_URL) {
@@ -665,15 +956,137 @@ async function main() {
         console.log(`[INFO] No secondary instance configured. Using single instance: ${DEFAULT_OLLAMA_URL}`);
     }
 
-    await initDatabase({ skipSchemaMigrations: true, skipTagRebuild: true, skipTokenBackfill: true });
+    const explicitIds = parseIdList(IDS_FILTER);
+    const deleteIds = parseIdList(DELETE_IDS_FILTER);
+    const queueRowIds = parseIdList(QUEUE_ROW_IDS_FILTER);
+    const needsSchema = QUEUE_MODE || explicitIds.length > 0 || deleteIds.length > 0 || queueRowIds.length > 0;
+
+    await initDatabase({ skipSchemaMigrations: !needsSchema, skipTagRebuild: true, skipTokenBackfill: true });
     const db = getDatabase();
     const totalRow = db.prepare('SELECT COUNT(*) as count FROM cards').get();
     stats.total = totalRow?.count || 0;
 
+    if (QUEUE_MODE) {
+        forceReembedAll = false;
+        forceChunkReembed = false;
+        verifyCardDocs = false;
+
+        const batchSize = resolveQueueBatchSize();
+        const queueRows = db.prepare(
+            'SELECT id, cardId, action FROM vector_index_queue ORDER BY id LIMIT ?'
+        ).all(batchSize);
+
+        if (!queueRows.length) {
+            console.log('[INFO] Vector queue is empty; nothing to do.');
+            process.exit(0);
+        }
+
+        const actionMap = new Map();
+        for (const row of queueRows) {
+            const cardId = String(row.cardId);
+            const action = row.action === 'delete' ? 'delete' : 'upsert';
+            const existing = actionMap.get(cardId);
+            if (!existing || action === 'delete') {
+                actionMap.set(cardId, action);
+            }
+        }
+
+        const queueDeleteIds = [];
+        const queueUpsertIds = [];
+        actionMap.forEach((action, cardId) => {
+            if (action === 'delete') {
+                queueDeleteIds.push(cardId);
+            } else {
+                queueUpsertIds.push(cardId);
+            }
+        });
+
+        stats.total = queueDeleteIds.length + queueUpsertIds.length;
+
+        for (const cardId of queueDeleteIds) {
+            await deleteVectorDocs(cardId, db);
+            stats.processed += 1;
+        }
+
+        if (queueUpsertIds.length) {
+            await processCardIds(queueUpsertIds, db);
+        }
+
+        const queueIds = queueRows.map(row => row.id);
+        const deletePlaceholders = queueIds.map(() => '?').join(', ');
+        db.prepare(`DELETE FROM vector_index_queue WHERE id IN (${deletePlaceholders})`).run(...queueIds);
+
+        console.log('[INFO] Vector ETL (queue) complete:', stats);
+        process.exit(0);
+    }
+
+    if (deleteIds.length) {
+        for (const cardId of deleteIds) {
+            await deleteVectorDocs(cardId, db);
+            stats.processed += 1;
+        }
+    }
+
+    if (!explicitIds.length && deleteIds.length) {
+        if (queueRowIds.length) {
+            const deletePlaceholders = queueRowIds.map(() => '?').join(', ');
+            db.prepare(`DELETE FROM vector_index_queue WHERE id IN (${deletePlaceholders})`).run(...queueRowIds);
+        }
+        console.log('[INFO] Vector ETL (filtered deletes) complete:', stats);
+        process.exit(0);
+    }
+
+    if (explicitIds.length) {
+        forceReembedAll = false;
+        forceChunkReembed = false;
+        verifyCardDocs = false;
+        stats.total = explicitIds.length;
+        await processCardIds(explicitIds, db);
+        if (queueRowIds.length) {
+            const deletePlaceholders = queueRowIds.map(() => '?').join(', ');
+            db.prepare(`DELETE FROM vector_index_queue WHERE id IN (${deletePlaceholders})`).run(...queueRowIds);
+        }
+        console.log('[INFO] Vector ETL (filtered) complete:', stats);
+        process.exit(0);
+    }
+
+    let cardsDocCount = null;
+    let chunksDocCount = null;
+    try {
+        const cardsStats = await cardsIndexClient.getStats();
+        cardsDocCount = typeof cardsStats?.numberOfDocuments === 'number' ? cardsStats.numberOfDocuments : null;
+    } catch (error) {
+        console.warn(`[WARN] Failed to read stats for ${CARDS_INDEX}: ${error?.message || error}`);
+    }
+    if (ENABLE_CHUNK_INDEX && chunksIndexClient) {
+        try {
+            const chunksStats = await chunksIndexClient.getStats();
+            chunksDocCount = typeof chunksStats?.numberOfDocuments === 'number' ? chunksStats.numberOfDocuments : null;
+        } catch (error) {
+            console.warn(`[WARN] Failed to read stats for ${CHUNKS_INDEX}: ${error?.message || error}`);
+        }
+    }
+
+    if (cardsDocCount === 0 && stats.total > 0) {
+        forceReembedAll = true;
+        verifyCardDocs = false;
+        console.warn(`[WARN] ${CARDS_INDEX} is empty; forcing full card re-embed`);
+    } else if (!forceReembedAll && Number.isFinite(cardsDocCount) && cardsDocCount < stats.total) {
+        verifyCardDocs = true;
+        console.warn(`[WARN] ${CARDS_INDEX} has ${cardsDocCount}/${stats.total} docs; verifying per-card vector docs`);
+    }
+
+    if (ENABLE_CHUNK_INDEX && chunksDocCount === 0 && stats.total > 0) {
+        forceChunkReembed = true;
+        console.warn(`[WARN] ${CHUNKS_INDEX} is empty; forcing chunk re-embed`);
+    } else if (!ENABLE_CHUNK_INDEX) {
+        forceChunkReembed = false;
+    }
+
     let lastId = START_AFTER || null;
     while (true) {
         const args = [];
-        let sql = 'SELECT id, name, tagline, description, topics, tokenCount, tokenDescriptionCount, tokenPersonalityCount, tokenScenarioCount, tokenMesExampleCount, tokenFirstMessageCount, tokenSystemPromptCount, tokenPostHistoryCount, author, language, source, sourceId, sourcePath, sourceUrl, visibility, favorited, hasAlternateGreetings, hasLorebook, hasEmbeddedLorebook, hasLinkedLorebook, hasExampleDialogues, hasSystemPrompt, hasGallery, isFuzzed, lastModified, createdAt, nChats, nMessages, n_favorites, starCount, fullPath FROM cards';
+        let sql = `SELECT ${CARD_SELECT_FIELDS} FROM cards`;
         if (lastId !== null && lastId !== undefined) {
             sql += ' WHERE id > ?';
             args.push(lastId);

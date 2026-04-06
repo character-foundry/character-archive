@@ -149,6 +149,7 @@ export interface Config {
   };
   vectorSearch?: {
     enabled: boolean;
+    enableChunks?: boolean;
     cardsIndex: string;
     chunksIndex: string;
     embedModel: string;
