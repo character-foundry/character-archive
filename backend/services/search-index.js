@@ -102,6 +102,7 @@ const MS_IN_DAY = 24 * 60 * 60 * 1000;
 
 let vectorSearchConfig = {
     enabled: false,
+    enableChunks: true,
     cardsIndex: 'cards_vsem',
     chunksIndex: 'card_chunks',
     embedModel: DEFAULT_EMBED_MODEL,
@@ -118,6 +119,14 @@ let vectorSearchConfig = {
 let vectorIndexReady = false;
 let vectorIndexSetupPromise = null;
 let chunkIndexHasDocs = true;
+
+function chunksAreEnabled(config = vectorSearchConfig) {
+    return config?.enableChunks !== false && Boolean((config?.chunksIndex || '').trim());
+}
+
+function getConfiguredChunkIndexUid(config = vectorSearchConfig) {
+    return chunksAreEnabled(config) ? (config?.chunksIndex || '').trim() : '';
+}
 
 export function configureSearchIndex(config = {}) {
     if (!config || config.enabled !== true) {
@@ -152,6 +161,7 @@ export function configureSearchIndex(config = {}) {
 export function configureVectorSearch(config = {}) {
     const sanitized = { ...vectorSearchConfig };
     if (typeof config.enabled === 'boolean') sanitized.enabled = config.enabled;
+    if (typeof config.enableChunks === 'boolean') sanitized.enableChunks = config.enableChunks;
     if (typeof config.cardsIndex === 'string' && config.cardsIndex.trim()) {
         sanitized.cardsIndex = config.cardsIndex.trim();
     }
@@ -191,8 +201,13 @@ export function configureVectorSearch(config = {}) {
 
     vectorSearchConfig = sanitized;
     vectorIndexReady = false;
+    chunkIndexHasDocs = chunksAreEnabled(sanitized);
     if (vectorSearchConfig.enabled) {
-        log.info(`Vector search configured (cards=${vectorSearchConfig.cardsIndex}, chunks=${vectorSearchConfig.chunksIndex})`);
+        if (chunksAreEnabled(vectorSearchConfig)) {
+            log.info(`Vector search configured (cards=${vectorSearchConfig.cardsIndex}, chunks=${vectorSearchConfig.chunksIndex})`);
+        } else {
+            log.info(`Vector search configured (cards=${vectorSearchConfig.cardsIndex}, chunks=disabled)`);
+        }
     }
     return vectorSearchConfig.enabled;
 }
@@ -218,6 +233,103 @@ function ensureMeiliEnabled() {
         throw new Error('Meilisearch is not enabled');
     }
     return meiliIndex;
+}
+
+export async function purgeVectorChunkArtifacts({ deleteIndex = true } = {}) {
+    const database = getDatabase();
+    if (!database) {
+        throw new Error('Database is not initialized');
+    }
+
+    const chunksIndexUid = (vectorSearchConfig.chunksIndex || '').trim();
+    let deletedIndex = false;
+    if (deleteIndex && meiliClient && chunksIndexUid) {
+        try {
+            const task = await meiliClient.deleteIndex(chunksIndexUid);
+            await waitForIndexTask(null, task, { label: `Delete chunk index (${chunksIndexUid})` });
+            deletedIndex = true;
+        } catch (error) {
+            const message = String(error?.message || '');
+            if (!message.includes('index_not_found') && !message.includes('not found')) {
+                throw error;
+            }
+            log.info(`Chunk index "${chunksIndexUid}" already absent`);
+        }
+    }
+
+    const chunkMapResult = database.prepare('DELETE FROM card_chunk_map').run();
+    const chunkMetaResult = database.prepare('DELETE FROM card_embedding_meta WHERE chunk_index >= 0').run();
+
+    chunkIndexHasDocs = false;
+    resetVectorIndexState('chunk-artifacts-purged');
+
+    const summary = {
+        deletedIndex,
+        clearedChunkMapRows: chunkMapResult.changes || 0,
+        clearedChunkMetaRows: chunkMetaResult.changes || 0
+    };
+    log.info('Purged vector chunk artifacts', summary);
+    return summary;
+}
+
+export async function ensureVectorEmbedders() {
+    if (!vectorSearchConfig.enabled) {
+        return false;
+    }
+    if (!meiliClient) {
+        log.warn('Cannot ensure vector embedders: Meilisearch client is not configured');
+        return false;
+    }
+    if (!vectorSearchConfig.embedderName) {
+        log.warn('Cannot ensure vector embedders: embedderName is not configured');
+        return false;
+    }
+    const dimensions = Number(vectorSearchConfig.embedDimensions);
+    if (!Number.isFinite(dimensions) || dimensions <= 0) {
+        log.warn('Cannot ensure vector embedders: embedDimensions is not configured');
+        return false;
+    }
+    const indexUids = [vectorSearchConfig.cardsIndex, getConfiguredChunkIndexUid()]
+        .map(uid => (uid || '').trim())
+        .filter(Boolean);
+    if (!indexUids.length) {
+        log.warn('Cannot ensure vector embedders: no vector indexes configured');
+        return false;
+    }
+
+    for (const uid of indexUids) {
+        const index = await ensureVectorIndex(uid, 'id');
+        let settings = {};
+        try {
+            settings = await index.getSettings();
+        } catch (error) {
+            log.warn(`Failed to read settings for index "${uid}"`, error);
+        }
+        const embedders = settings?.embedders || {};
+        const currentEmbedder = embedders[vectorSearchConfig.embedderName];
+        const currentDimensions = Number(currentEmbedder?.dimensions);
+        if (currentEmbedder && Number.isFinite(currentDimensions) && currentDimensions === dimensions) {
+            continue;
+        }
+        const pending = await hasPendingSettingsUpdate(uid);
+        if (pending) {
+            log.warn(`Embedder settings update already pending for index "${uid}"`);
+            continue;
+        }
+        const task = await index.updateSettings({
+            embedders: {
+                ...embedders,
+                [vectorSearchConfig.embedderName]: {
+                    source: 'userProvided',
+                    dimensions
+                }
+            }
+        });
+        await waitForIndexTask(index, task, { label: `Meili settings (${uid})` });
+        log.info(`Updated embedder settings for index "${uid}" (${vectorSearchConfig.embedderName}, ${dimensions})`);
+    }
+
+    return true;
 }
 
 async function applyDefaultSettings() {
@@ -929,6 +1041,40 @@ function ensureVectorClient() {
     }
 }
 
+function isMissingEmbedderError(error) {
+    const message = String(error?.message || error || '');
+    return message.includes('Cannot find embedder');
+}
+
+function resetVectorIndexState(reason = '') {
+    vectorIndexReady = false;
+    vectorIndexSetupPromise = null;
+    if (reason) {
+        log.warn(`Vector index state reset (${reason})`);
+    }
+}
+
+async function hasPendingSettingsUpdate(indexUid) {
+    if (!meiliClient?.tasks || typeof meiliClient.tasks.getTasks !== 'function') {
+        return false;
+    }
+    const uid = (indexUid || '').trim();
+    if (!uid) return false;
+    try {
+        const tasks = await meiliClient.tasks.getTasks({
+            indexUids: [uid],
+            types: ['settingsUpdate'],
+            statuses: ['enqueued', 'processing'],
+            limit: 1
+        });
+        const results = Array.isArray(tasks?.results) ? tasks.results : [];
+        return results.length > 0;
+    } catch (error) {
+        log.warn('Failed to check Meilisearch task queue', error);
+        return false;
+    }
+}
+
 async function fetchQueryEmbedding(text) {
     const trimmed = typeof text === 'string' ? text.trim() : '';
     if (!trimmed) {
@@ -1011,43 +1157,57 @@ function resolveEmbedDimensions(observedLength = null) {
     return null;
 }
 
-async function waitForIndexTask(index, task) {
-    if (!task) return;
+async function waitForIndexTask(index, task, { timeoutMs = 60000, allowFallback = true, label = 'Meili task' } = {}) {
+    if (!task) return true;
     const taskUid = task?.taskUid ?? task?.uid;
-    if (!taskUid) return;
-    const waitOpts = { timeOutMs: 60000 };
+    if (!taskUid) return true;
+    const waitOpts = { timeOutMs: timeoutMs };
+    if (meiliClient?.tasks && typeof meiliClient.tasks.getTask === 'function') {
+        const start = Date.now();
+        let lastLog = 0;
+        while (true) {
+            const taskStatus = await meiliClient.tasks.getTask(taskUid);
+            const status = taskStatus?.status || 'unknown';
+            const elapsedSec = Math.floor((Date.now() - start) / 1000);
+            if (Date.now() - lastLog > 5000) {
+                log.info(`${label} ${taskUid} status=${status} elapsed=${elapsedSec}s`);
+                lastLog = Date.now();
+            }
+            if (status !== 'enqueued' && status !== 'processing') {
+                return true;
+            }
+            if (Date.now() - start > timeoutMs) {
+                log.warn(`Timed out waiting for Meilisearch task ${taskUid} (status=${status})`);
+                return false;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
     if (index && typeof index.waitForTask === 'function') {
         try {
             await index.waitForTask(taskUid, waitOpts);
-            return;
-        } catch {
+            return true;
+        } catch (error) {
+            if (!allowFallback) {
+                log.warn('Failed waiting for Meilisearch task', error);
+                return false;
+            }
             // fall through to global wait
         }
     }
     if (meiliClient && typeof meiliClient.waitForTask === 'function') {
         try {
             await meiliClient.waitForTask(taskUid, waitOpts);
+            return true;
         } catch (error) {
             log.warn('Failed waiting for Meilisearch task', error);
-        }
-    } else if (meiliClient?.tasks && typeof meiliClient.tasks.getTask === 'function') {
-        const start = Date.now();
-        while (true) {
-            const taskStatus = await meiliClient.tasks.getTask(taskUid);
-            if (!taskStatus || taskStatus.status === 'enqueued' || taskStatus.status === 'processing') {
-                if (Date.now() - start > 60000) {
-                    log.warn(`Timed out waiting for Meilisearch task ${taskUid}`);
-                    break;
-                }
-                await new Promise(resolve => setTimeout(resolve, 500));
-                continue;
-            }
-            break;
+            return false;
         }
     }
+    return true;
 }
 
-async function ensureVectorIndexesReady(observedLength) {
+async function ensureVectorIndexesReady(observedLength, options = {}) {
     if (vectorIndexReady) {
         return;
     }
@@ -1061,6 +1221,9 @@ async function ensureVectorIndexesReady(observedLength) {
     if (!meiliClient) {
         throw new Error('Meilisearch client is not configured');
     }
+    const waitTimeoutMs = Number.isFinite(options.waitTimeoutMs) ? options.waitTimeoutMs : 60000;
+    const allowPending = options.allowPending === true;
+    const allowFallbackWait = options.allowFallbackWait !== false;
     if (vectorIndexSetupPromise) {
         return vectorIndexSetupPromise;
     }
@@ -1072,21 +1235,25 @@ async function ensureVectorIndexesReady(observedLength) {
                 filterables: Array.from(FILTERABLE_FIELDS),
                 distinct: null
             },
-            {
-                uid: vectorSearchConfig.chunksIndex,
-                primaryKey: 'id',
-                filterables: VECTOR_CHUNK_FILTERABLES,
-                distinct: VECTOR_CHUNK_DISTINCT_ATTRIBUTE
-            }
+            ...(chunksAreEnabled()
+                ? [{
+                    uid: vectorSearchConfig.chunksIndex,
+                    primaryKey: 'id',
+                    filterables: VECTOR_CHUNK_FILTERABLES,
+                    distinct: VECTOR_CHUNK_DISTINCT_ATTRIBUTE
+                }]
+                : [])
         ].filter(def => (def.uid || '').trim());
         if (!indexDefinitions.length) {
             throw new Error('Vector indexes are not configured');
         }
         const cardsIndexUid = (vectorSearchConfig.cardsIndex || '').trim();
-        const chunksIndexUid = (vectorSearchConfig.chunksIndex || '').trim();
+        const chunksIndexUid = getConfiguredChunkIndexUid();
 
         let cardsDocs = null;
         let chunksDocs = null;
+        let settingsPending = false;
+        let embedderReady = true;
         for (const definition of indexDefinitions) {
             const { uid, primaryKey, filterables, distinct } = definition;
             const index = await ensureVectorIndex(uid, primaryKey);
@@ -1106,6 +1273,7 @@ async function ensureVectorIndexesReady(observedLength) {
                     throw new Error(`Embedder "${vectorSearchConfig.embedderName}" on index "${uid}" expects dimension ${currentDimensions}, but the current model produced ${dimensions}. Recreate the index or update config.vectorSearch.embedDimensions.`);
                 }
             } else {
+                embedderReady = false;
                 pendingSettings.embedders = {
                     ...embedders,
                     [vectorSearchConfig.embedderName]: {
@@ -1131,9 +1299,29 @@ async function ensureVectorIndexesReady(observedLength) {
             }
 
             if (Object.keys(pendingSettings).length > 0) {
+                const alreadyPending = await hasPendingSettingsUpdate(uid);
+                if (alreadyPending) {
+                    settingsPending = true;
+                    log.warn(`Settings update already pending for index "${uid}"`);
+                    continue;
+                }
                 const task = await index.updateSettings(pendingSettings);
-                await waitForIndexTask(index, task);
-                log.info(`Updated settings for index "${uid}" (${Object.keys(pendingSettings).join(', ')})`);
+                let completed = true;
+                if (waitTimeoutMs <= 0) {
+                    completed = false;
+                } else {
+                    completed = await waitForIndexTask(index, task, {
+                        timeoutMs: waitTimeoutMs,
+                        allowFallback: allowFallbackWait,
+                        label: `Meili settings (${uid})`
+                    });
+                }
+                if (completed) {
+                    log.info(`Updated settings for index "${uid}" (${Object.keys(pendingSettings).join(', ')})`);
+                } else {
+                    settingsPending = true;
+                    log.warn(`Settings update still processing for index "${uid}"`);
+                }
             }
 
             try {
@@ -1148,15 +1336,19 @@ async function ensureVectorIndexesReady(observedLength) {
                 log.warn(`Failed to read stats for index "${uid}"`, error);
             }
         }
+        if (settingsPending && !allowPending && !embedderReady) {
+            vectorIndexReady = false;
+            throw new Error('Vector index settings are still updating. Retry shortly.');
+        }
         if (!cardsDocs || cardsDocs <= 0) {
             vectorIndexReady = false;
             throw new Error('Vector cards index is empty. Run `npm run vector:backfill` to populate embeddings or disable vector search.');
         }
-        chunkIndexHasDocs = typeof chunksDocs === 'number' ? chunksDocs > 0 : false;
-        if (!chunkIndexHasDocs) {
+        chunkIndexHasDocs = chunksIndexUid ? (typeof chunksDocs === 'number' ? chunksDocs > 0 : false) : false;
+        if (chunksIndexUid && !chunkIndexHasDocs) {
             log.warn('Vector chunk index appears empty; chunk highlights will be disabled until you run `npm run vector:backfill`.');
         }
-        vectorIndexReady = true;
+        vectorIndexReady = embedderReady;
     })().finally(() => {
         vectorIndexSetupPromise = null;
     });
@@ -1455,12 +1647,31 @@ export async function searchVectorCards({
         : vectorSearchConfig.semanticRatio;
 
     const embedding = await fetchQueryEmbedding(text);
-    await ensureVectorIndexesReady(embedding.length);
+    await ensureVectorIndexesReady(embedding.length, {
+        waitTimeoutMs: 0,
+        allowPending: true,
+        allowFallbackWait: false
+    });
+    if (!vectorIndexReady) {
+        return {
+            ids: [],
+            total: 0,
+            appliedFilter: normalizedFilter,
+            chunkMatches: {},
+            scores: {},
+            meta: {
+                semanticRatio: effectiveSemanticRatio,
+                cardsFetched: 0,
+                chunksFetched: 0,
+                skippedReason: 'settings-pending'
+            }
+        };
+    }
 
     const cardsIndex = getVectorIndex(vectorSearchConfig.cardsIndex);
-    const chunksIndex = getVectorIndex(vectorSearchConfig.chunksIndex);
-    if (!cardsIndex || !chunksIndex) {
-        throw new Error('Vector indexes are unavailable');
+    const chunksIndex = chunksAreEnabled() ? getVectorIndex(vectorSearchConfig.chunksIndex) : null;
+    if (!cardsIndex) {
+        throw new Error('Vector cards index is unavailable');
     }
 
     const cardsLimit = computeCardFetchLimit(offset, perPage);
@@ -1485,8 +1696,8 @@ export async function searchVectorCards({
     }
     const chunkFilterExpression = adaptFilterForChunks(normalizedFilter);
 
-    const chunkSearchEnabled = chunkIndexHasDocs && Boolean(chunksIndex);
-    const [cardsResult, chunksResult] = await Promise.all([
+    const chunkSearchEnabled = chunksAreEnabled() && chunkIndexHasDocs && Boolean(chunksIndex);
+    const runVectorSearch = async () => Promise.all([
         cardsIndex.search(text, searchPayload),
         chunkSearchEnabled
             ? chunksIndex.search(text, {
@@ -1505,6 +1716,40 @@ export async function searchVectorCards({
             })
             : Promise.resolve({ hits: [] })
     ]);
+
+    let cardsResult;
+    let chunksResult;
+    try {
+        [cardsResult, chunksResult] = await runVectorSearch();
+    } catch (error) {
+        if (!isMissingEmbedderError(error)) {
+            throw error;
+        }
+        log.warn('Vector embedder missing; scheduling vector index refresh');
+        resetVectorIndexState('missing-embedder');
+        try {
+            await ensureVectorIndexesReady(embedding.length, {
+                waitTimeoutMs: 0,
+                allowPending: true,
+                allowFallbackWait: false
+            });
+        } catch (refreshError) {
+            log.warn('Vector index refresh failed', refreshError);
+        }
+        return {
+            ids: [],
+            total: 0,
+            appliedFilter: normalizedFilter,
+            chunkMatches: {},
+            scores: {},
+            meta: {
+                semanticRatio: effectiveSemanticRatio,
+                cardsFetched: 0,
+                chunksFetched: 0,
+                skippedReason: 'embedder-missing'
+            }
+        };
+    }
 
     const cardHits = Array.isArray(cardsResult?.hits) ? cardsResult.hits : [];
     const chunkHits = Array.isArray(chunksResult?.hits) ? chunksResult.hits : [];

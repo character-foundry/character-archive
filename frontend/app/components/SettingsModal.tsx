@@ -48,6 +48,7 @@ type SettingsModalProps = {
     };
     defaultVectorSearchState: {
         enabled: boolean;
+        enableChunks: boolean;
         cardsIndex: string;
         chunksIndex: string;
         embedModel: string;
@@ -857,6 +858,20 @@ export const SettingsModal = ({
                                         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                             Meilisearch + Ollama
                                         </h3>
+                                        <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                            <input
+                                                type="checkbox"
+                                                name="vector_enableChunks"
+                                                defaultChecked={config?.vectorSearch?.enableChunks ?? defaultVectorSearchState.enableChunks}
+                                                className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-900"
+                                            />
+                                            <span className="space-y-1">
+                                                <span className="block font-medium">Enable chunk vectors</span>
+                                                <span className="block text-xs text-slate-500 dark:text-slate-400">
+                                                    Keep this on if you want semantic snippets and chunk-level reranking. Turn it off to use only the whole-card vector index and skip building <code>card_chunks</code>.
+                                                </span>
+                                            </span>
+                                        </label>
                                         <div className="grid gap-4 md:grid-cols-2">
                                             <label className="flex flex-col gap-2 text-sm">
                                                 <span className="font-medium text-slate-700 dark:text-slate-300">Cards index UID</span>
@@ -977,13 +992,13 @@ export const SettingsModal = ({
                                             </summary>
                                             <div className="mt-3 space-y-2 leading-relaxed">
                                                 <p>
-                                                    <strong>Enable</strong> only after both Meili indexes (<code>cards_vsem</code> + <code>card_chunks</code>) are populated. The cards index stores one embedding per narrative section, while the chunk index stores every over-length section or alternate greeting.
+                                                    <strong>Vector search</strong> needs the cards index populated. Chunk vectors are optional: keep <code>Enable chunk vectors</code> on only if you also want the <code>card_chunks</code> index and semantic snippets.
                                                 </p>
                                                 <p>
                                                     <strong>Ollama URL &amp; Embed model</strong> must match whatever powered the backfill. Changing the model requires regenerating embeddings or results will be meaningless.
                                                 </p>
                                                 <p>
-                                                    <strong>Cards / chunk indexes</strong> tell the API which Meili UID to query. Keep them in sync with whatever UID you swap into production (e.g. <code>cards_vsem</code> while it is staged, <code>cards</code> once you swap).
+                                                    <strong>Cards / chunk indexes</strong> tell the API which Meili UID to query. When chunk vectors are disabled, the chunk UID is ignored and can stay reserved for later.
                                                 </p>
                                                 <p>
                                                     <strong>Semantic ratio</strong> biases Meili between lexical and vector scoring. Values around 0.3‑0.5 keep keyword intent intact; go lower for proper nouns, higher for vibes.
@@ -992,7 +1007,7 @@ export const SettingsModal = ({
                                                     <strong>Cards multiplier</strong> controls how many lexical hits we fetch before fusing with chunk hits. If exact matches disappear, bump this toward 3‑4 so the baseline list stays deep enough.
                                                 </p>
                                                 <p>
-                                                    <strong>Chunk limit / weight</strong> governs how many chunk-only hits are allowed to outrank lexical ones. Lower the weight if semantic snippets drown out obvious keyword matches; raise it when you want long-form alternates to drive the ranking.
+                                                    <strong>Chunk limit / weight</strong> only apply when chunk vectors are enabled. Lower the weight if semantic snippets drown out obvious keyword matches; raise it when you want long-form alternates to drive the ranking.
                                                 </p>
                                                 <p>
                                                     <strong>RRF k</strong> is the denominator inside reciprocal-rank fusion. Higher values flatten the advantage of top-ranked items; leave it at 60 unless you have a reason to rebalance the curve.

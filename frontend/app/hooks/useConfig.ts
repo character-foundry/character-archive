@@ -155,6 +155,7 @@ export function useConfig(): UseConfigResult {
       const vectorConfig = {
         ...previousVector,
         enabled: data.get("vector_enabled") === "on",
+        enableChunks: data.get("vector_enableChunks") === "on",
         cardsIndex: getStringValue("vector_cardsIndex", { trim: true }) || previousVector.cardsIndex,
         chunksIndex: getStringValue("vector_chunksIndex", { trim: true }) || previousVector.chunksIndex,
         embedModel: getStringValue("vector_embedModel", { trim: true }) || previousVector.embedModel,

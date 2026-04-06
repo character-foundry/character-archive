@@ -105,6 +105,25 @@ export function ensureSchema(db) {
         CREATE INDEX IF NOT EXISTS idx_search_index_queue_card ON search_index_queue(cardId);
         CREATE INDEX IF NOT EXISTS idx_search_index_queue_action ON search_index_queue(action);
 
+        CREATE TABLE IF NOT EXISTS vector_index_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cardId TEXT NOT NULL,
+            action TEXT NOT NULL CHECK(action IN ('upsert','delete')),
+            queuedAt TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_vector_index_queue_card ON vector_index_queue(cardId);
+        CREATE INDEX IF NOT EXISTS idx_vector_index_queue_action ON vector_index_queue(action);
+
+        CREATE TABLE IF NOT EXISTS png_optimization_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cardId INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(cardId)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_png_optimization_queue_card ON png_optimization_queue(cardId);
+
         CREATE TRIGGER IF NOT EXISTS trg_cards_after_insert_search_queue
         AFTER INSERT ON cards
         BEGIN
@@ -121,6 +140,38 @@ export function ensureSchema(db) {
         AFTER DELETE ON cards
         BEGIN
             INSERT INTO search_index_queue(cardId, action) VALUES (OLD.id, 'delete');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_cards_after_insert_vector_queue
+        AFTER INSERT ON cards
+        BEGIN
+            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_cards_after_update_vector_queue
+        AFTER UPDATE ON cards
+        BEGIN
+            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_cards_after_delete_vector_queue
+        AFTER DELETE ON cards
+        BEGIN
+            INSERT INTO vector_index_queue(cardId, action) VALUES (OLD.id, 'delete');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_cards_after_insert_png_opt_queue
+        AFTER INSERT ON cards
+        WHEN NEW.source != 'risuai'
+        BEGIN
+            INSERT OR IGNORE INTO png_optimization_queue(cardId) VALUES (NEW.id);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_cards_after_update_png_opt_queue
+        AFTER UPDATE ON cards
+        WHEN NEW.source != 'risuai'
+        BEGIN
+            INSERT OR IGNORE INTO png_optimization_queue(cardId) VALUES (NEW.id);
         END;
 
         CREATE TABLE IF NOT EXISTS card_embedding_meta (

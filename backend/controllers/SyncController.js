@@ -8,6 +8,8 @@ import { getDatabase } from '../database.js';
 import { logger } from '../utils/logger.js';
 import { appConfig } from '../services/ConfigState.js';
 import { drainSearchIndexQueue } from '../services/search-index.js';
+import { scheduleVectorBackfill } from '../services/VectorBackfillService.js';
+import { scheduleOptimization } from '../services/PngOptimizationService.js';
 
 const log = logger.scoped('SYNC');
 
@@ -73,6 +75,8 @@ class SyncController {
             res.end();
         } finally {
             lockService.setSyncInProgress(false);
+            scheduleVectorBackfill('manual-sync');
+            scheduleOptimization('chub-sync');
         }
     }
 
@@ -115,6 +119,8 @@ class SyncController {
             res.end();
         } finally {
             lockService.setCtSyncInProgress(false);
+            scheduleVectorBackfill('ct-sync');
+            scheduleOptimization('ct-sync');
         }
     }
 
@@ -151,6 +157,8 @@ class SyncController {
             res.end();
         } finally {
             lockService.setSyncInProgress(false);
+            scheduleVectorBackfill('wyvern-sync');
+            scheduleOptimization('wyvern-sync');
         }
     }
 
@@ -187,6 +195,7 @@ class SyncController {
             res.end();
         } finally {
             lockService.setSyncInProgress(false);
+            scheduleVectorBackfill('risuai-sync');
         }
     }
 
