@@ -28,6 +28,7 @@ x-app: &app
     - ${ARCHIVE_BACKUP_DIR:-./backup}:/app/backup
     - ${ARCHIVE_DATA_DIR:-./data}/blacklist.txt:/app/blacklist.txt
     - ${ARCHIVE_DATA_DIR:-./data}/ct-blacklist.txt:/app/ct-blacklist.txt
+    - ${ARCHIVE_DATA_DIR:-./data}/tag-aliases.json:/app/tag-aliases.json
     - ${ARCHIVE_DATA_DIR:-./data}/risuai-blacklist.txt:/app/risuai-blacklist.txt
     - ${ARCHIVE_DATA_DIR:-./data}/risuai-cooldown.json:/app/risuai-cooldown.json
     - ${ARCHIVE_DATA_DIR:-./data}/wyvern-blacklist.txt:/app/wyvern-blacklist.txt
