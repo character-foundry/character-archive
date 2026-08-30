@@ -53,6 +53,9 @@ RUN apk add --no-cache sqlite wget tini
 COPY --from=packages /build/packages /packages
 COPY --from=backend-deps /app/node_modules ./node_modules
 COPY --from=backend-deps /app/package.json ./package.json
+RUN mkdir -p node_modules/@character-foundry && \
+    ln -sfn /packages/image-utils node_modules/@character-foundry/image-utils && \
+    node -e "Promise.all(['@character-foundry/charx', '@character-foundry/image-utils', '@character-foundry/schemas'].map((name) => import(name)))"
 COPY server.js config-loader.js ./
 COPY backend ./backend
 COPY scripts ./scripts
