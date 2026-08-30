@@ -198,6 +198,20 @@ export function createVectorGenerationRepository(database) {
             return changes;
         },
 
+        releaseItems(ids, now) {
+            if (!ids?.length) return 0;
+            const placeholders = ids.map(() => '?').join(',');
+            const releasedAt = isoNow(now);
+            return database.prepare(`
+                UPDATE vector_work_items
+                SET status = 'retry', attempts = MAX(attempts - 1, 0), next_attempt_at = ?,
+                    lease_owner = NULL, lease_expires_at = NULL, meili_task_uids = NULL,
+                    last_error = NULL, updated_at = ?, leased_revision = NULL
+                WHERE id IN (${placeholders}) AND status IN ('leased','submitted')
+                  AND revision = leased_revision
+            `).run(releasedAt, releasedAt, ...ids).changes;
+        },
+
         failItems(ids, error, { maxAttempts = 5, now } = {}) {
             if (!ids?.length) return 0;
             const failedAt = isoNow(now);

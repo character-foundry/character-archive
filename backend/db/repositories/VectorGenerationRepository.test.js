@@ -74,6 +74,41 @@ test('work leases retry and only complete after the worker reports success', () 
     }
 });
 
+test('worker shutdown releases a lease immediately without consuming an attempt', () => {
+    const { db, vectors } = harness();
+    try {
+        const generation = vectors.reconcile({
+            modelName: 'model', embedderName: 'embedder', dimensions: 8,
+            cardsIndexBase: 'cards', chunksIndexBase: 'chunks'
+        });
+        const claimed = vectors.claimBatch({ generationId: generation.id, workerId: 'worker-a', limit: 2 });
+        assert.equal(claimed.length, 2);
+        assert.equal(claimed[0].attempts, 1);
+
+        assert.equal(vectors.releaseItems(claimed.map(item => item.id), '2026-08-30T12:00:00.000Z'), 2);
+        const released = db.prepare(`
+            SELECT status, attempts, next_attempt_at, lease_owner, lease_expires_at, leased_revision
+            FROM vector_work_items WHERE id = ?
+        `).get(claimed[0].id);
+        assert.deepEqual(released, {
+            status: 'retry',
+            attempts: 0,
+            next_attempt_at: '2026-08-30T12:00:00.000Z',
+            lease_owner: null,
+            lease_expires_at: null,
+            leased_revision: null
+        });
+        assert.equal(vectors.claimBatch({
+            generationId: generation.id,
+            workerId: 'worker-b',
+            limit: 2,
+            now: '2026-08-30T12:00:00.000Z'
+        }).length, 2);
+    } finally {
+        db.close();
+    }
+});
+
 test('a stale failed lease cannot overwrite a newer queued revision', () => {
     const { db, vectors } = harness();
     try {

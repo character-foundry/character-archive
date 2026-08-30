@@ -20,6 +20,9 @@ const maxTaskBacklog = Math.max(1, Number(process.env.VECTOR_MAX_MEILI_TASK_BACK
 const runOnce = process.argv.includes('--once');
 let consecutiveFailures = 0;
 let circuitOpenUntil = 0;
+let stopping = false;
+let activeChild = null;
+let forceKillTimer = null;
 
 initDatabase({ skipTagRebuild: true, skipTokenBackfill: true });
 const database = getDatabase();
@@ -79,14 +82,24 @@ function runEtl(items, generation, config) {
             env,
             stdio: ['ignore', 'pipe', 'pipe']
         });
+        activeChild = child;
         let stdout = '';
         child.stdout.on('data', chunk => {
             process.stdout.write(chunk);
             stdout = `${stdout}${chunk}`.slice(-1_000_000);
         });
         child.stderr.on('data', chunk => process.stderr.write(chunk));
-        child.once('error', reject);
+        const clearActiveChild = () => {
+            if (activeChild === child) activeChild = null;
+            if (forceKillTimer) clearTimeout(forceKillTimer);
+            forceKillTimer = null;
+        };
+        child.once('error', error => {
+            clearActiveChild();
+            reject(error);
+        });
         child.once('exit', (code, signal) => {
+            clearActiveChild();
             if (code !== 0) {
                 reject(new Error(`Vector ETL exited ${code}${signal ? ` (${signal})` : ''}`));
                 return;
@@ -106,6 +119,7 @@ function runEtl(items, generation, config) {
 }
 
 async function tick() {
+    if (stopping) return false;
     const config = loadConfig();
     if (config.vectorSearch?.enabled !== true || config.meilisearch?.enabled !== true) return false;
     if (process.env.VECTOR_AUTO_RECONCILE !== '0') generations.reconcile(specFromConfig(config));
@@ -123,6 +137,7 @@ async function tick() {
         return false;
     }
     if (Date.now() < circuitOpenUntil) return false;
+    if (stopping) return false;
 
     const items = generations.claimBatch({ generationId: generation.id, workerId, limit: batchSize, leaseSeconds: 900 });
     if (!items.length) return false;
@@ -133,6 +148,11 @@ async function tick() {
         circuitOpenUntil = 0;
         log.info(`Completed ${items.length} vector work items for generation ${generation.id}`);
     } catch (error) {
+        if (stopping) {
+            const released = generations.releaseItems(items.map(item => item.id));
+            log.info(`Released ${released} vector work items during shutdown`);
+            return false;
+        }
         generations.failItems(items.map(item => item.id), error, { maxAttempts: 5 });
         consecutiveFailures += 1;
         if (consecutiveFailures >= 3) circuitOpenUntil = Date.now() + 60000;
@@ -149,9 +169,24 @@ async function main() {
             log.error('Vector worker tick failed', error);
         }
         if (runOnce) break;
+        if (stopping) break;
         await new Promise(resolve => setTimeout(resolve, pollMs));
-    } while (true);
+    } while (!stopping);
 }
+
+function requestStop(signal) {
+    if (stopping) return;
+    stopping = true;
+    log.info(`Received ${signal}; stopping vector worker`);
+    if (activeChild) {
+        activeChild.kill('SIGTERM');
+        forceKillTimer = setTimeout(() => activeChild?.kill('SIGKILL'), 3000);
+        forceKillTimer.unref();
+    }
+}
+
+process.once('SIGTERM', () => requestStop('SIGTERM'));
+process.once('SIGINT', () => requestStop('SIGINT'));
 
 main().catch(error => {
     log.error('Vector worker stopped', error);
