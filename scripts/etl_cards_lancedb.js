@@ -85,7 +85,7 @@ async function main() {
         const items = rows.map(row => {
             const document = buildSearchDocumentFromRow(row);
             const normalized = normalizeLanceDocument(document);
-            const text = normalized.searchText.slice(0, tokenBudget * 4);
+            const text = normalized.searchText.slice(0, tokenBudget * 4).toWellFormed();
             return { document, text };
         });
 
