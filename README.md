@@ -22,11 +22,11 @@ This project allows you to mirror character cards from multiple sources ([Chub.a
 
 ## Requirements
 
-*   **Node.js:** Version 20 or higher.
+*   **Node.js:** Version 22 or 23. Node 24 is not supported by this release.
 *   **pnpm:** Package manager (required for workspace dependencies).
 *   **SQLite:** (Bundled with Node.js drivers, no separate install usually needed).
 *   **Meilisearch (Optional):** Version 1.40+ recommended (required for advanced/vector search and Character Tavern sync).
-*   **Ollama (Optional):** Required only for semantic vector search embedding generation.
+*   **Embedding endpoint (Optional):** Ollama or an OpenAI-compatible embeddings endpoint is required only for semantic vector search.
 
 ### Dependencies
 
@@ -59,7 +59,7 @@ Character Archive requires the character-foundry monorepo as a sibling directory
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/axAilotl/character-archive.git
+git clone https://github.com/character-foundry/character-archive.git
 cd character-archive
 pnpm install
 ```
@@ -146,8 +146,16 @@ cd /path/to/character-foundry
 # Set up environment
 cd character-archive
 cp .env.example .env
-mkdir -p static data.ms dumps snapshots
-touch cards.db
+mkdir -p runtime/state static data backup data.ms dumps snapshots
+touch \
+  data/blacklist.txt \
+  data/ct-blacklist.txt \
+  data/risuai-blacklist.txt \
+  data/wyvern-blacklist.txt
+for file in data/tag-aliases.json data/risuai-cooldown.json data/wyvern-cooldown.json; do
+  [ -e "$file" ] || printf '{}\n' > "$file"
+done
+sqlite3 runtime/state/cards.db 'PRAGMA journal_mode=WAL;'
 
 # Start services
 docker compose up -d
@@ -158,7 +166,7 @@ Access the application:
 *   **Backend API:** http://localhost:6969
 *   **Meilisearch:** http://localhost:7700
 
-The shipped Compose stack currently pins Meilisearch to `v1.40.0`, caps it at `32 GiB` RAM, and sets `MEILI_MAX_INDEXING_MEMORY=24GiB` to avoid the runaway-memory behavior seen in earlier uncapped deployments.
+The writable configuration and SQLite files live under `runtime/state`; scraper blacklists, cooldowns, and tag aliases live under `data`. To migrate an existing live database, use SQLite's `.backup` command instead of copying its main file while writers are running. The shipped Compose stack pins Meilisearch to `v1.40.0`, caps it at `32 GiB` RAM, and sets `MEILI_MAX_INDEXING_MEMORY=24GiB` to avoid the runaway-memory behavior seen in earlier uncapped deployments.
 
 For detailed Docker configuration, see [docker/README.md](docker/README.md).
 
@@ -168,22 +176,25 @@ For detailed Docker configuration, see [docker/README.md](docker/README.md).
 
 ### Syncing Cards
 
-*   **Manual Sync (Chub):**
-    Click the **Sync** button in the UI header, or run:
+*   **Manual Sync (all enabled sources):**
+    Click **Sync All** in the UI. Chub, Character Tavern, RisuAI, and Wyvern are queued in one durable run and use the same scheduler boundary.
+
+*   **Manual Sync (Chub only):**
+    Run:
     ```bash
     pnpm sync
     ```
     *This respects your `config.json` settings (timeline vs search, tags, etc).*
 
-*   **Manual Sync (Character Tavern):**
-    Click the **Sync CT** button (globe icon) in the UI, or run:
+*   **Manual Sync (Character Tavern only):**
+    Run:
     ```bash
     pnpm import:ct
     ```
     *(Note: CT sync requires valid cookies in config).*
 
 *   **Manual Sync (RisuAI/Wyvern):**
-    Use the Settings modal in the UI to trigger syncs for RisuAI and Wyvern sources. Configure sync intervals in `config.json`.
+    Use **Sync All** or the source controls in Settings. Configure source enablement and intervals in `config.json`.
 
 ### Searching
 

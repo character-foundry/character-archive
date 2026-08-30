@@ -4,10 +4,18 @@ The production stack separates the API, Next.js web UI, archive worker, vector w
 
 ## Persistent layout
 
-Copy `.env.example` to `.env`, then create the writable directories:
+Copy `.env.example` to `.env`, then create the writable directories and bind-mounted state files:
 
 ```bash
-mkdir -p runtime/state data backup dumps snapshots
+mkdir -p runtime/state static data backup data.ms dumps snapshots
+touch \
+  data/blacklist.txt \
+  data/ct-blacklist.txt \
+  data/risuai-blacklist.txt \
+  data/wyvern-blacklist.txt
+for file in data/tag-aliases.json data/risuai-cooldown.json data/wyvern-cooldown.json; do
+  [ -e "$file" ] || printf '{}\n' > "$file"
+done
 ```
 
 `runtime/state` must contain `config.json` and `cards.db`. SQLite creates its WAL and shared-memory files beside the database, so the entire directory is mounted instead of a single database file. Card artifacts, scraper state, backups, and Meilisearch each use separate mounts.
@@ -17,6 +25,12 @@ Create a consistent database copy while the current service is live:
 ```bash
 sqlite3 cards.db ".backup 'runtime/state/cards.db'"
 cp config.json runtime/state/config.json
+```
+
+For a new deployment, initialize an empty database and let the API create its schema:
+
+```bash
+sqlite3 runtime/state/cards.db 'PRAGMA journal_mode=WAL;'
 ```
 
 The configuration is writable in Docker. API saves use a temporary file, `fsync`, and atomic rename.
