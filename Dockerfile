@@ -62,7 +62,9 @@ COPY scripts ./scripts
 COPY --from=frontend-build /app/frontend/.next/standalone ./frontend
 COPY --from=frontend-build /app/frontend/.next/static ./frontend/.next/static
 COPY frontend/public ./frontend/public
-RUN mkdir -p /state /app/static /app/data /app/backup
+RUN chmod a+r package.json server.js config-loader.js && \
+    chmod -R a+rX /packages backend scripts frontend && \
+    mkdir -p /state /app/static /app/data /app/backup
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
