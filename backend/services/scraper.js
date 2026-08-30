@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js';
 import {
     createChubClient,
     rateLimitedRequest,
+    retryTransientRequest,
     loadBlacklist,
     isBlacklisted
 } from './ApiClient.js';
@@ -1149,7 +1150,13 @@ export async function syncCards(config, progressCallback = null) {
 
             try {
                 const url = `https://gateway.chub.ai/api/timeline/v1?page=${currentPage}&count=true`;
-                const response = await rateLimitedRequest(url, { headers: client.defaults.headers });
+                const response = await retryTransientRequest(
+                    () => rateLimitedRequest(url, { headers: client.defaults.headers }),
+                    { onRetry: ({ attempt, delay, error }) => scraperLogger.warn(
+                        `Retrying Chub timeline page ${currentPage} after ${error.message} ` +
+                        `(retry ${attempt}, ${delay}ms)`
+                    ) }
+                );
                 
                 const cards = response.data?.data?.nodes || [];
                 if (cards.length === 0) {
@@ -1254,7 +1261,13 @@ export async function syncCards(config, progressCallback = null) {
                     const params = { ...baseParams, page };
                     if (tagValue) params.topics = tagValue;
 
-                    const response = await client.get('https://gateway.chub.ai/search', { params });
+                    const response = await retryTransientRequest(
+                        () => client.get('https://gateway.chub.ai/search', { params }),
+                        { onRetry: ({ attempt, delay, error }) => scraperLogger.warn(
+                            `Retrying Chub search page ${page} after ${error.message} ` +
+                            `(retry ${attempt}, ${delay}ms)`
+                        ) }
+                    );
                     const cards = response.data?.data?.nodes || [];
 
                     if (cards.length === 0) {
@@ -1350,7 +1363,13 @@ export async function syncCards(config, progressCallback = null) {
                         exclude_mine: 'false'
                     };
 
-                    const response = await client.get('https://gateway.chub.ai/search', { params });
+                    const response = await retryTransientRequest(
+                        () => client.get('https://gateway.chub.ai/search', { params }),
+                        { onRetry: ({ attempt, delay, error }) => scraperLogger.warn(
+                            `Retrying creator '${username}' page ${page} after ${error.message} ` +
+                            `(retry ${attempt}, ${delay}ms)`
+                        ) }
+                    );
                     const cards = response.data?.data?.nodes || [];
 
                     if (cards.length === 0) {

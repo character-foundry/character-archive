@@ -11,6 +11,28 @@ const MIN_REQUEST_INTERVAL = 1000;
 let lastRequestTime = 0;
 const blacklistSet = new Set();
 
+function isTransientRequestError(error) {
+    const status = Number(error?.response?.status);
+    if ([408, 425, 429].includes(status) || status >= 500) return true;
+    return ['ECONNABORTED', 'ECONNRESET', 'ENETUNREACH', 'ETIMEDOUT'].includes(error?.code);
+}
+
+export async function retryTransientRequest(request, options = {}) {
+    const delays = options.delays || [1000, 3000];
+    const sleep = options.sleep || (delay => new Promise(resolve => setTimeout(resolve, delay)));
+
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            return await request();
+        } catch (error) {
+            if (!isTransientRequestError(error) || attempt >= delays.length) throw error;
+            const delay = delays[attempt];
+            options.onRetry?.({ attempt: attempt + 1, delay, error });
+            await sleep(delay);
+        }
+    }
+}
+
 export function loadBlacklist() {
     if (fs.existsSync(BLACKLIST_FILE)) {
         const content = fs.readFileSync(BLACKLIST_FILE, 'utf8');

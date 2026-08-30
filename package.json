@@ -31,7 +31,7 @@
     "repair:ct": "node scripts/repair-ct.js",
     "vector:fixture": "node scripts/build-vector-benchmark-fixture.js",
     "vector:benchmark": "node scripts/benchmark-vector-generations.js",
-    "test": "node --test config.test.js lib/query-builder.test.js backend/db/schema.test.js backend/db/repositories/CardRepository.test.js backend/db/repositories/SyncRunRepository.test.js backend/db/repositories/VectorGenerationRepository.test.js backend/services/ArchiveSourceHandlers.test.js backend/services/ArchiveSyncService.test.js backend/services/CtRepairService.test.js backend/services/EmbeddingClient.test.js backend/services/scrapers/CtScraper.test.js backend/utils/logger.test.js scripts/vector-etl-contract.test.js"
+    "test": "node --test config.test.js lib/query-builder.test.js backend/db/schema.test.js backend/db/repositories/CardRepository.test.js backend/db/repositories/SyncRunRepository.test.js backend/db/repositories/VectorGenerationRepository.test.js backend/services/ApiClient.test.js backend/services/ArchiveSourceHandlers.test.js backend/services/ArchiveSyncService.test.js backend/services/CtRepairService.test.js backend/services/EmbeddingClient.test.js backend/services/scrapers/BaseScraper.test.js backend/services/scrapers/CtScraper.test.js backend/utils/logger.test.js scripts/vector-etl-contract.test.js"
   },
   "keywords": [
     "chub",

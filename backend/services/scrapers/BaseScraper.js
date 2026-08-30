@@ -30,6 +30,28 @@ const PROJECT_ROOT = path.join(__dirname, '../../..');
 const STATIC_DIR = process.env.CHARACTER_ARCHIVE_STATIC_DIR || path.join(PROJECT_ROOT, 'static');
 const DATA_DIR = process.env.CHARACTER_ARCHIVE_DATA_DIR || path.join(PROJECT_ROOT, 'data');
 
+function timestampToArchiveSecond(value) {
+    if (value instanceof Date) {
+        const milliseconds = value.getTime();
+        return Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : null;
+    }
+
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    let normalized = value;
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+        normalized = `${value.replace(' ', 'T')}Z`;
+    }
+    const milliseconds = new Date(normalized).getTime();
+    return Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : null;
+}
+
+export function isRemoteTimestampNewer(existingTimestamp, remoteTimestamp) {
+    const existingSecond = timestampToArchiveSecond(existingTimestamp);
+    const remoteSecond = timestampToArchiveSecond(remoteTimestamp);
+    if (existingSecond === null || remoteSecond === null) return true;
+    return remoteSecond > existingSecond;
+}
+
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -346,10 +368,7 @@ export class BaseScraper {
 
         // Skip if exists and not newer (unless forcing)
         if (existing && !force && remoteTimestamp) {
-            const existingDate = new Date(existing.lastModified).getTime();
-            const remoteTime = new Date(remoteTimestamp).getTime();
-
-            if (remoteTime <= existingDate) {
+            if (!isRemoteTimestampNewer(existing.lastModified, remoteTimestamp)) {
                 this.log.debug(`Card ${sourceId} unchanged, skipping`);
                 return { success: false, reason: 'unchanged', dbId: existing.id };
             }
