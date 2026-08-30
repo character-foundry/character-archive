@@ -58,14 +58,21 @@ test('Character Tavern image is required to have a PNG signature', async () => {
     await assert.rejects(() => scraper.fetchImage('alice/test_card'), /not a valid PNG/);
 });
 
-test('Character Tavern image retries a transient CDN placeholder', async () => {
+test('Character Tavern image requests PNG content and retries a transient CDN miss', async () => {
     let attempts = 0;
     const delays = [];
+    const requestHeaders = [];
     const scraper = new CtScraper({
         httpClient: {
-            async get() {
+            async get(_url, options) {
                 attempts += 1;
-                return { data: attempts === 1 ? Buffer.from('<html>not ready</html>') : PNG };
+                requestHeaders.push(options.headers);
+                if (attempts === 1) {
+                    const error = new Error('not published');
+                    error.response = { status: 404 };
+                    throw error;
+                }
+                return { data: PNG, headers: { 'content-type': 'image/png' } };
             }
         },
         imageRetryDelays: [25],
@@ -75,4 +82,5 @@ test('Character Tavern image retries a transient CDN placeholder', async () => {
     assert.deepEqual(await scraper.fetchImage('alice/test_card'), PNG);
     assert.equal(attempts, 2);
     assert.deepEqual(delays, [25]);
+    assert.equal(requestHeaders[0].accept, 'image/png');
 });

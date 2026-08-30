@@ -256,7 +256,7 @@ export class CtScraper extends BaseScraper {
         const normalizedPath = this.normalizeSourcePath(cardPath);
         const url = `${CARDS_BASE_URL}/${normalizedPath}.png`;
         const headers = {
-            accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            accept: 'image/png',
             referer: `${CT_SITE_URL}/`,
             'user-agent': DEFAULT_HEADERS['user-agent']
         };
@@ -278,20 +278,18 @@ export class CtScraper extends BaseScraper {
                 });
                 const buffer = Buffer.from(response.data);
                 if (buffer.length < signature.length || !buffer.subarray(0, signature.length).equals(signature)) {
-                    const error = new Error(`Character Tavern image for ${normalizedPath} is not a valid PNG`);
-                    error.code = 'CT_IMAGE_NOT_READY';
-                    throw error;
+                    const contentType = response.headers?.['content-type'] || response.headers?.get?.('content-type') || 'unknown';
+                    throw new Error(`Character Tavern image for ${normalizedPath} is not a valid PNG (content-type: ${contentType})`);
                 }
                 return buffer;
             } catch (error) {
                 lastError = error;
                 const status = Number(error?.response?.status || 0);
-                const retryable = error?.code === 'CT_IMAGE_NOT_READY'
-                    || status === 404
+                const retryable = status === 404
                     || status === 409
                     || status === 425
                     || status === 429
-                    || status >= 500;
+                    || (status >= 500 && status <= 599);
                 const delay = this.imageRetryDelays[attempt];
                 if (!retryable || delay === undefined) break;
                 this.log.warn(`Character Tavern image for ${normalizedPath} is not ready; retrying in ${delay}ms`);
