@@ -9,7 +9,7 @@ cards.db*
 database.db*
 config.json
 config.local.json
-config.js
+/config.js
 .env*
 !.env.example
 .npmrc
