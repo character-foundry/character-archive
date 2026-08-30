@@ -89,6 +89,7 @@ async function main() {
             return { document, text };
         });
 
+        const vectorDocuments = [];
         for (const batch of batches(items)) {
             const usable = batch.filter(item => item.text.trim());
             const skipped = batch.length - usable.length;
@@ -106,13 +107,11 @@ async function main() {
                 normalize: true,
                 signal: AbortSignal.timeout(Number(process.env.EMBEDDING_TIMEOUT_MS) || 300000)
             });
-            await backend.upsertVectorDocuments(usable.map((item, index) => ({ ...item, vector: vectors[index] })), {
-                tableName,
-                dimensions
-            });
+            vectorDocuments.push(...usable.map((item, index) => ({ ...item, vector: vectors[index] })));
             stats.cardUpdates += usable.length;
             stats.processed += usable.length;
         }
+        await backend.upsertVectorDocuments(vectorDocuments, { tableName, dimensions });
     } finally {
         await backend.close();
     }

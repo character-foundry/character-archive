@@ -45,7 +45,9 @@ test('Lance vector ETL batches embeddings and fulfills the durable worker contra
         }
     }));
 
+    let embeddingRequests = 0;
     const server = http.createServer(async (request, response) => {
+        embeddingRequests += 1;
         let raw = '';
         for await (const chunk of request) raw += chunk;
         const body = JSON.parse(raw);
@@ -86,10 +88,12 @@ test('Lance vector ETL batches embeddings and fulfills the durable worker contra
         forceReembed: true
     });
     assert.equal(result.cardUpdates, 3);
+    assert.equal(embeddingRequests, 2, 'large inputs should remain split across inference requests');
 
     const connection = await lancedb.connect(lancePath);
     const table = await connection.openTable('test_vectors');
     assert.equal(await table.countRows(), 3);
+    assert.equal((await table.listVersions()).length, 1, 'one ETL run should produce one LanceDB write');
     await table.close();
     await connection.close();
 });
