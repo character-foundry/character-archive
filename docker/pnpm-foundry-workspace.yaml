@@ -1,0 +1,9 @@
+packages:
+  - .
+  - packages/*
+
+allowBuilds:
+  esbuild: true
+
+overrides:
+  "@character-foundry/schemas": "workspace:^"

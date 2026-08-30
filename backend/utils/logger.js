@@ -19,6 +19,7 @@ const LOG_LEVELS = {
 
 // Current log level (can be set via environment variable)
 const CURRENT_LOG_LEVEL = LOG_LEVELS[process.env.LOG_LEVEL?.toUpperCase()] ?? LOG_LEVELS.INFO;
+const SENSITIVE_LOG_KEY = /(?:^|[-_])(authorization|cookie|api[-_]?key|token|password|secret|session|samwise|bearer|clearance)(?:$|[-_])/i;
 
 /**
  * Format timestamp for logs
@@ -27,13 +28,39 @@ function getTimestamp() {
     return new Date().toISOString();
 }
 
+export function sanitizeLogValue(value, seen = new WeakSet(), depth = 0) {
+    if (value === null || value === undefined || typeof value !== 'object') return value;
+    if (value instanceof Error) {
+        return Object.fromEntries([
+            ['name', value.name],
+            ['message', value.message],
+            ['code', value.code],
+            ['status', value.status]
+        ].filter(([, entry]) => entry !== undefined));
+    }
+    if (value instanceof Date) return value.toISOString();
+    if (Buffer.isBuffer(value)) return `[Buffer ${value.length} bytes]`;
+    if (depth >= 8) return '[MAX_DEPTH]';
+    if (seen.has(value)) return '[CIRCULAR]';
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        return value.map(entry => sanitizeLogValue(entry, seen, depth + 1));
+    }
+
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+        key,
+        SENSITIVE_LOG_KEY.test(key) ? '[REDACTED]' : sanitizeLogValue(entry, seen, depth + 1)
+    ]));
+}
+
 /**
  * Format metadata object for logging
  */
 function formatMeta(meta) {
     if (!meta || Object.keys(meta).length === 0) return '';
     try {
-        return ' ' + JSON.stringify(meta);
+        return ' ' + JSON.stringify(sanitizeLogValue(meta));
     } catch (error) {
         return ' [metadata serialization failed]';
     }

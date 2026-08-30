@@ -601,7 +601,7 @@ class CardController {
                         {
                             enabled: true,
                             mode: advancedResult.mode,
-                            query: params.advancedText,
+                            query: params.advancedText || params.query,
                             filter: advancedResult.appliedFilter,
                             vector: advancedResult.mode === 'vector' ? {
                                 enabled: true,

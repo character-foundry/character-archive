@@ -4,6 +4,10 @@
   "description": "Character Archive - Node.js Edition",
   "main": "server.js",
   "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22 <24"
+  },
   "scripts": {
     "start": "node server.js",
     "predev": "node scripts/predev.js",
@@ -21,7 +25,13 @@
     "vector:backfill": "node scripts/etl_cards_vector_search.js",
     "vector:flush": "node scripts/flush-vector-indexes.js",
     "vector:embedders": "node scripts/ensure-vector-embedders.js",
-    "optimize:pngs": "node scripts/optimize-pngs.js"
+    "optimize:pngs": "node scripts/optimize-pngs.js",
+    "worker:archive": "node scripts/archive-worker.js",
+    "worker:vector": "node scripts/vector-worker.js",
+    "repair:ct": "node scripts/repair-ct.js",
+    "vector:fixture": "node scripts/build-vector-benchmark-fixture.js",
+    "vector:benchmark": "node scripts/benchmark-vector-generations.js",
+    "test": "node --test config.test.js lib/query-builder.test.js backend/db/schema.test.js backend/db/repositories/CardRepository.test.js backend/db/repositories/SyncRunRepository.test.js backend/db/repositories/VectorGenerationRepository.test.js backend/services/ArchiveSourceHandlers.test.js backend/services/ArchiveSyncService.test.js backend/services/CtRepairService.test.js backend/services/EmbeddingClient.test.js backend/services/scrapers/CtScraper.test.js backend/utils/logger.test.js"
   },
   "keywords": [
     "chub",
@@ -32,6 +42,7 @@
   "license": "MIT",
   "dependencies": {
     "@character-foundry/core": "^0.1.2",
+    "@character-foundry/charx": "^0.0.7",
     "@character-foundry/exporter": "^0.1.3",
     "@character-foundry/federation": "^0.2.0",
     "@character-foundry/image-utils": "workspace:^",

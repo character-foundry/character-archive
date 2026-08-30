@@ -1,6 +1,6 @@
 
 import axios from 'axios';
-import { loadConfig } from '../../config.js';
+import { loadConfig } from '../../config-loader.js';
 
 class SillyTavernService {
     constructor() {

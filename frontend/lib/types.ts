@@ -149,11 +149,15 @@ export interface Config {
   };
   vectorSearch?: {
     enabled: boolean;
+    enableChunks?: boolean;
     cardsIndex: string;
     chunksIndex: string;
     embedModel: string;
     embedderName: string;
     embedDimensions: number;
+    embeddingProvider?: 'ollama' | 'openai';
+    embeddingUrl?: string;
+    embeddingApiKey?: string;
     ollamaUrl: string;
     semanticRatio?: number;
     cardsMultiplier?: number;
@@ -166,6 +170,31 @@ export interface Config {
     enabled?: boolean;
     url: string;
   };
+}
+
+export interface SyncSourceRun {
+  source: string;
+  status: 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
+  added: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  error_message?: string | null;
+}
+
+export interface SyncRun {
+  id: number;
+  trigger_type: string;
+  status: SyncSourceRun['status'];
+  current_source?: string | null;
+  requested_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  added: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  sources: SyncSourceRun[];
 }
 
 export interface ChubFollow {

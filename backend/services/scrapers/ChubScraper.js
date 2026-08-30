@@ -348,7 +348,7 @@ export class ChubScraper extends BaseScraper {
         this.loadBlacklist();
 
         // Delegate to existing complex sync logic
-        return chubSyncCards(config, progressCallback);
+        return chubSyncCards({ ...config, skipSecondarySources: true }, progressCallback);
     }
 
     /**

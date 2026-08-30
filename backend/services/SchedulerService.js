@@ -1,5 +1,5 @@
 
-import { loadConfig } from '../../config.js';
+import { loadConfig } from '../../config-loader.js';
 import { syncCards } from './scraper.js';
 import { syncCharacterTavern } from './scrapers/CtScraper.js';
 import { drainSearchIndexQueue, isSearchIndexEnabled } from './search-index.js';
@@ -124,6 +124,9 @@ class SchedulerService {
         }
 
         this.searchIndexQueueTimer = setInterval(() => {
+            if (lockService.isSyncInProgress() || lockService.isCtSyncInProgress()) {
+                return;
+            }
             drainSearchIndexQueue('interval');
         }, this.SEARCH_INDEX_QUEUE_INTERVAL_MS);
     }

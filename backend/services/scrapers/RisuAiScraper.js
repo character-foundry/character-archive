@@ -204,7 +204,7 @@ export class RisuAiScraper extends BaseScraper {
             return cards;
         } catch (error) {
             this.log.error(`Failed to fetch list page ${page}`, error);
-            return [];
+            throw new Error(`RisuAI list page ${page} failed: ${error.message}`, { cause: error });
         }
     }
 

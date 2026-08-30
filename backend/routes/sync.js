@@ -1,7 +1,6 @@
 
 import express from 'express';
 import { syncController } from '../controllers/SyncController.js';
-import { lockService } from '../services/LockService.js';
 import rateLimit from 'express-rate-limit';
 
 const router = express.Router();
@@ -16,9 +15,13 @@ const syncLimiter = rateLimit({
     skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1' || req.ip === '::ffff:127.0.0.1'
 });
 
-// Map root / to syncCards to match frontend expectation
+router.post('/runs', syncLimiter, syncController.createRun);
+router.get('/runs/:id', syncController.getRun);
+router.post('/runs/:id/cancel', syncController.cancelRun);
+
+// Legacy SSE wrappers enqueue durable runs so existing clients keep working.
 router.get('/', syncLimiter, syncController.syncCards);
-router.get('/cards', syncLimiter, syncController.syncCards);
+router.get('/cards', syncLimiter, syncController.syncChub);
 router.get('/ct', syncLimiter, syncController.syncCharacterTavern);
 router.get('/wyvern', syncLimiter, syncController.syncWyvern);
 router.get('/risuai', syncLimiter, syncController.syncRisuAi);
@@ -27,13 +30,7 @@ router.get('/chub/follows', syncController.getChubFollows);
 router.get('/chub/blocked', syncController.getChubBlockedUsers);
 
 // Sync status and cancel endpoints
-router.get('/status', (req, res) => {
-    res.json(lockService.getSyncStatus());
-});
-
-router.post('/cancel', (req, res) => {
-    lockService.abortAllSyncs();
-    res.json({ success: true, message: 'Sync cancellation requested' });
-});
+router.get('/status', syncController.getStatus);
+router.post('/cancel', syncController.cancelAll);
 
 export default router;

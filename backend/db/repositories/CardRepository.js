@@ -10,6 +10,7 @@ import {
     splitTopicsToArray,
     normalizeTagValue
 } from './TagRepository.js';
+import { TOKEN_COUNT_COLUMNS, resolveTokenCountsFromMetadata } from '../../utils/token-counts.js';
 
 const log = logger.scoped('Repo:Cards');
 
@@ -17,7 +18,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const fsp = fs.promises;
-const STATIC_DIR = path.join(__dirname, '../../../static');
+const STATIC_DIR = process.env.CHARACTER_ARCHIVE_STATIC_DIR || path.join(__dirname, '../../../static');
 const CARDS_PER_PAGE = 48;
 const CARD_TAGS_TABLE_NAME = 'card_tags';
 
@@ -249,7 +250,14 @@ export function upsertCard(metadata) {
     const columnsClause = baseColumns.join(', ');
     const placeholdersClause = baseColumns.map(() => '?').join(', ');
 
-    const sql = `INSERT OR REPLACE INTO cards (${columnsClause}) VALUES (${placeholdersClause})`;
+    const updateClause = baseColumns
+        .filter(column => column !== 'id')
+        .map(column => `${column} = excluded.${column}`)
+        .join(', ');
+    const sql = `
+        INSERT INTO cards (${columnsClause}) VALUES (${placeholdersClause})
+        ON CONFLICT(id) DO UPDATE SET ${updateClause}
+    `;
     
     const computedSourceUrl = resolveSourceUrlValue({
         source: metadata.source || 'chub',
@@ -715,9 +723,15 @@ export async function backfillTokenCounts(databaseConn) {
     const nullChecks = TOKEN_COUNT_COLUMNS.map(column => `${column} IS NULL`).join(' OR ');
     const limit = 250;
     let processed = 0;
+    let cursor = 0;
 
     try {
-        const selectStmt = databaseConn.prepare(`SELECT id FROM cards WHERE source = 'chub' AND (${nullChecks}) LIMIT ?`);
+        const selectStmt = databaseConn.prepare(`
+            SELECT id FROM cards
+            WHERE id > ? AND source = 'chub' AND (${nullChecks})
+            ORDER BY id ASC
+            LIMIT ?
+        `);
         const updateStmt = databaseConn.prepare(`UPDATE cards
             SET tokenDescriptionCount = ?,
                 tokenPersonalityCount = ?,
@@ -729,11 +743,12 @@ export async function backfillTokenCounts(databaseConn) {
             WHERE id = ?`);
 
         while (true) {
-            const rows = selectStmt.all(limit);
+            const rows = selectStmt.all(cursor, limit);
             if (!rows.length) {
                 break;
             }
             for (const row of rows) {
+                cursor = row.id;
                 const metadata = await readMetadataFile(row.id);
                 if (!metadata) {
                     continue;

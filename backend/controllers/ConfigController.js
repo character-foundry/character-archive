@@ -1,9 +1,15 @@
 
-import { saveConfig } from '../../config.js';
+import { saveConfig } from '../../config-loader.js';
 import { appConfig } from '../services/ConfigState.js';
 import { sillyTavernService } from '../services/SillyTavernService.js';
 import { schedulerService } from '../services/SchedulerService.js';
-import { configureSearchIndex, configureVectorSearch, isSearchIndexEnabled, drainSearchIndexQueue } from '../services/search-index.js';
+import {
+    configureSearchIndex,
+    configureVectorSearch,
+    isSearchIndexEnabled,
+    drainSearchIndexQueue,
+    purgeVectorChunkArtifacts
+} from '../services/search-index.js';
 import { logger } from '../utils/logger.js';
 
 const log = logger.scoped('CONFIG');
@@ -15,6 +21,7 @@ class ConfigController {
 
     setConfig = async (req, res) => {
         try {
+            const chunksWereEnabled = appConfig?.vectorSearch?.enableChunks !== false;
             const newConfig = { ...appConfig, ...req.body };
 
             if (newConfig.use_timeline && !newConfig.apikey) {
@@ -30,15 +37,14 @@ class ConfigController {
 
             configureSearchIndex(appConfig.meilisearch);
             configureVectorSearch(appConfig.vectorSearch || {});
+            if (chunksWereEnabled && appConfig?.vectorSearch?.enableChunks === false) {
+                await purgeVectorChunkArtifacts();
+            }
 
             schedulerService.startSearchIndexScheduler();
             if (isSearchIndexEnabled()) {
                 drainSearchIndexQueue('config-update');
             }
-
-            // Restart auto-update if settings changed
-            schedulerService.startAutoUpdate();
-            schedulerService.startCtAutoUpdate();
 
             res.json({ message: 'Successfully updated the config' });
         } catch (error) {

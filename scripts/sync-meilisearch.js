@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { MeiliSearch } from 'meilisearch';
-import { loadConfig } from '../config.js';
+import { loadConfig } from '../config-loader.js';
 import { initDatabase, getDatabase } from '../backend/database.js';
 import { configureSearchIndex, rebuildSearchIndexFromRows } from '../backend/services/search-index.js';
 

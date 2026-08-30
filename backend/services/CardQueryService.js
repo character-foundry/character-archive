@@ -262,7 +262,7 @@ export async function performAdvancedSearch(params) {
                     sort: params.sort
                 }),
                 searchMeilisearchCards({
-                    text: params.advancedText,
+                    text: queryText,
                     filter: meiliFilterExpression,
                     page: params.page,
                     limit: params.limit,
@@ -319,7 +319,7 @@ export async function performAdvancedSearch(params) {
     // Lexical-only search
     try {
         const meiliResult = await searchMeilisearchCards({
-            text: params.advancedText,
+            text: queryText,
             filter: meiliFilterExpression,
             page: params.page,
             limit: params.limit,

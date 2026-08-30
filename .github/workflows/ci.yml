@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: character-archive
+      - uses: actions/checkout@v4
+        with:
+          repository: character-foundry/character-foundry
+          path: character-foundry
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: character-archive/frontend/package-lock.json
+      - run: pnpm install --frozen-lockfile
+        working-directory: character-archive
+      - run: npm ci --prefix frontend
+        working-directory: character-archive
+      - run: >-
+          npx eslint
+          app/components/PaginationHeader.tsx
+          app/components/SettingsModal.tsx
+          app/hooks/useConfig.ts
+          app/hooks/useSync.ts
+          app/types/config.ts
+          lib/types.ts
+          next.config.ts
+        working-directory: character-archive/frontend
+      - run: npm run build --prefix frontend
+        working-directory: character-archive
+      - run: npm test
+        working-directory: character-archive
+      - run: npm run test:url --prefix frontend
+        working-directory: character-archive
+      - run: docker compose -f character-archive/docker-compose.yml config

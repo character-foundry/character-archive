@@ -50,6 +50,19 @@ describe('CardRepository', () => {
         const tags = db.prepare('SELECT * FROM card_tags WHERE cardId = ?').all(1);
         assert.strictEqual(tags.length, 2);
     });
+
+    it('should update a card without cascading deletion to cached assets', () => {
+        upsertCard({ id: 1, name: 'Before', topics: 'old' });
+        db.prepare(`
+            INSERT INTO cached_assets (cardId, originalUrl, localPath, assetType)
+            VALUES (1, 'https://example.test/expression.png', '/static/expression.png', 'expression')
+        `).run();
+
+        upsertCard({ id: 1, name: 'After', topics: 'new' });
+
+        assert.strictEqual(db.prepare('SELECT name FROM cards WHERE id = 1').get().name, 'After');
+        assert.strictEqual(db.prepare('SELECT COUNT(*) AS count FROM cached_assets WHERE cardId = 1').get().count, 1);
+    });
     
     it('should get cards with pagination', () => {
         // Insert 50 cards

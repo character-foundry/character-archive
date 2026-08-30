@@ -48,12 +48,8 @@ class LockService {
 
     // Cancel all syncs
     abortAllSyncs() {
-        if (this.syncInProgress) {
-            this.syncAborted = true;
-        }
-        if (this.ctSyncInProgress) {
-            this.ctSyncAborted = true;
-        }
+        this.syncAborted = true;
+        this.ctSyncAborted = true;
     }
 
     // Get status of all syncs

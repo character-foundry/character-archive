@@ -23,9 +23,11 @@ export function createConnection(databaseFile) {
         db.pragma('journal_mode = WAL');
         db.pragma('synchronous = NORMAL');
         db.pragma('foreign_keys = ON');
+        db.pragma(`busy_timeout = ${Math.max(1000, Number(process.env.SQLITE_BUSY_TIMEOUT_MS) || 15000)}`);
         db.pragma('cache_size = -64000');  // 64MB cache
         db.pragma('temp_store = MEMORY');
-        db.pragma('mmap_size = 2147483648');  // 2GB memory map (was 30GB, risked OOM)
+        const mmapBytes = Math.max(0, Number(process.env.SQLITE_MMAP_SIZE) || 536870912);
+        db.pragma(`mmap_size = ${mmapBytes}`);  // 512MB default; bounded by the container instead of mapping tens of GB.
 
         return db;
     } catch (error) {

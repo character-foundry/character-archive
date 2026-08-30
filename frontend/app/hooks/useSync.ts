@@ -7,6 +7,7 @@ import {
   cancelAllSyncs as cancelAllSyncsApi,
   getSyncStatus as getSyncStatusApi
 } from "@/lib/api";
+import type { SyncRun } from "@/lib/types";
 
 interface SyncSourceState {
   syncing: boolean;
@@ -38,6 +39,7 @@ interface UseSyncResult {
   cancelRisuSync: () => void;
   // Global
   anySyncing: boolean;
+  latestSyncRun: SyncRun | null;
   cancelAllSyncs: () => void;
 }
 
@@ -107,12 +109,13 @@ function useSyncSource(
       if (stream) {
         await processSSEStream(stream);
       }
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      if (error.name === 'AbortError') {
         setStatus(`${sourceName} sync cancelled`);
       } else {
-        console.error(err);
-        setStatus(err?.message || `Unable to sync from ${sourceName}`);
+        console.error(error);
+        setStatus(error.message || `Unable to sync from ${sourceName}`);
       }
     } finally {
       setSyncing(false);
@@ -142,7 +145,7 @@ export function useSync(onSyncComplete?: () => void): UseSyncResult {
   const risu = useSyncSource("RisuAI", startRisuAiSyncApi, onSyncComplete);
 
   // Cancel all syncs at once - calls backend to stop + aborts frontend streams
-  const cancelAllSyncs = useCallback(async () => {
+  const cancelAllSyncs = async () => {
     try {
       await cancelAllSyncsApi();
     } catch (err) {
@@ -152,7 +155,7 @@ export function useSync(onSyncComplete?: () => void): UseSyncResult {
     ct.cancel();
     wyvern.cancel();
     risu.cancel();
-  }, [chub.cancel, ct.cancel, wyvern.cancel, risu.cancel]);
+  };
 
   // Computed: is any sync currently running (locally initiated)?
   const anySyncingLocal = chub.syncing || ct.syncing || wyvern.syncing || risu.syncing;
@@ -163,6 +166,8 @@ export function useSync(onSyncComplete?: () => void): UseSyncResult {
     ct: { inProgress: boolean };
     wyvern: { inProgress: boolean };
     risuai: { inProgress: boolean };
+    latestRun?: SyncRun | null;
+    activeRuns?: SyncRun[];
   } | null>(null);
 
   // Poll backend status only when a sync is active
@@ -203,11 +208,13 @@ export function useSync(onSyncComplete?: () => void): UseSyncResult {
       backendSyncStatus?.wyvern?.inProgress, backendSyncStatus?.risuai?.inProgress]);
 
   // Any sync running (local or backend)
-  const anySyncing = anySyncingLocal ||
-    backendSyncStatus?.chub?.inProgress ||
-    backendSyncStatus?.ct?.inProgress ||
-    backendSyncStatus?.wyvern?.inProgress ||
-    backendSyncStatus?.risuai?.inProgress;
+  const anySyncing = Boolean(
+    anySyncingLocal ||
+      backendSyncStatus?.chub?.inProgress ||
+      backendSyncStatus?.ct?.inProgress ||
+      backendSyncStatus?.wyvern?.inProgress ||
+      backendSyncStatus?.risuai?.inProgress
+  );
 
   return {
     // Chub
@@ -232,6 +239,7 @@ export function useSync(onSyncComplete?: () => void): UseSyncResult {
     cancelRisuSync: risu.cancel,
     // Global
     anySyncing,
+    latestSyncRun: backendSyncStatus?.latestRun || null,
     cancelAllSyncs,
   };
 }

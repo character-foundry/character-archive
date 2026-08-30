@@ -1,4 +1,4 @@
-import { loadConfig, saveConfig } from '../config.js';
+import { loadConfig, saveConfig } from '../config-loader.js';
 
 const newUrl = process.argv[2];
 

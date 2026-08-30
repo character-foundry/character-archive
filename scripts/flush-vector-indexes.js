@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { MeiliSearch } from 'meilisearch';
-import { loadConfig } from '../config.js';
+import { loadConfig } from '../config-loader.js';
 import { initDatabase, getDatabase } from '../backend/database.js';
 
 function sleep(ms) {
@@ -53,20 +53,22 @@ async function deleteIndexIfExists(client, taskClient, indexUid) {
     }
 }
 
-async function clearChunkMap(skip) {
+async function clearChunkArtifacts(skip) {
     if (skip) {
-        console.log('[INFO] Skipping local card_chunk_map purge');
+        console.log('[INFO] Skipping local chunk artifact purge');
         return;
     }
     await initDatabase({ skipSchemaMigrations: true, skipTagRebuild: true, skipTokenBackfill: true });
     const db = getDatabase();
-    db.prepare('DELETE FROM card_chunk_map').run();
-    console.log('[INFO] Cleared card_chunk_map table');
+    const mapResult = db.prepare('DELETE FROM card_chunk_map').run();
+    const metaResult = db.prepare('DELETE FROM card_embedding_meta WHERE chunk_index >= 0').run();
+    console.log(`[INFO] Cleared chunk artifacts (card_chunk_map=${mapResult.changes || 0}, card_embedding_meta=${metaResult.changes || 0})`);
 }
 
 async function main() {
     const args = new Set(process.argv.slice(2));
     const keepChunks = args.has('--keep-chunks') || process.env.LCR_VECTOR_KEEP_CHUNKS === '1';
+    const chunksOnly = args.has('--chunks-only') || process.env.LCR_VECTOR_CHUNKS_ONLY === '1';
 
     const config = loadConfig();
     const meiliCfg = config?.meilisearch || {};
@@ -92,12 +94,18 @@ async function main() {
 
     const taskClient = client.tasks;
 
-    await deleteIndexIfExists(client, taskClient, cardsIndex);
+    if (!chunksOnly) {
+        await deleteIndexIfExists(client, taskClient, cardsIndex);
+    }
     await deleteIndexIfExists(client, taskClient, chunksIndex);
 
-    await clearChunkMap(keepChunks);
+    await clearChunkArtifacts(keepChunks);
 
-    console.log('[INFO] Vector indexes flushed. Run `npm run vector:backfill` (optionally with LCR_VECTOR_FORCE=1) to rebuild.');
+    if (chunksOnly) {
+        console.log('[INFO] Chunk vector artifacts flushed. Chunk indexing will stay gone until chunk vectors are re-enabled and backfilled.');
+    } else {
+        console.log('[INFO] Vector indexes flushed. Run `npm run vector:backfill` (optionally with LCR_VECTOR_FORCE=1) to rebuild.');
+    }
     process.exit(0);
 }
 

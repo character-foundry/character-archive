@@ -1,301 +1,108 @@
-# Docker Deployment Guide
+# Docker deployment
 
-This guide covers running Character Archive using Docker and Docker Compose.
+The production stack separates the API, Next.js web UI, archive worker, vector worker, and Meilisearch. Every application container uses Node 22. Inference remains external; the stack does not start llama.cpp or copy model weights.
 
-## Prerequisites
+## Persistent layout
 
-- Docker 20.10+ and Docker Compose v2
-- ~2GB RAM minimum (4GB+ recommended for Meilisearch)
-- Storage for your card collection (varies by usage)
-
-## Quick Start
-
-### 1. Navigate to the parent directory
-
-The build context requires both `character-archive/` and `character-foundry/` to be siblings:
+Copy `.env.example` to `.env`, then create the writable directories:
 
 ```bash
-cd /path/to/character-foundry  # Parent directory containing both projects
+mkdir -p runtime/state data backup dumps snapshots
 ```
 
-### 2. Create environment file
+`runtime/state` must contain `config.json` and `cards.db`. SQLite creates its WAL and shared-memory files beside the database, so the entire directory is mounted instead of a single database file. Card artifacts, scraper state, backups, and Meilisearch each use separate mounts.
+
+Create a consistent database copy while the current service is live:
 
 ```bash
-cd character-archive
-cp .env.example .env
-# Edit .env to set MEILI_MASTER_KEY if desired
+sqlite3 cards.db ".backup 'runtime/state/cards.db'"
+cp config.json runtime/state/config.json
 ```
 
-### 3. Create data directories
+The configuration is writable in Docker. API saves use a temporary file, `fsync`, and atomic rename.
+
+## Build and validate on alternate ports
+
+The Docker build uses the sibling `../character-foundry` checkout as a named BuildKit context, avoiding the hundreds of gigabytes of archive data in the parent directory.
 
 ```bash
-mkdir -p static meili-data
-touch cards.db
+docker compose build
+APP_PORT=16969 FRONTEND_PORT=13177 MEILI_PORT=17700 \
+MEILI_DATA_DIR=./runtime/meili-shadow \
+docker compose up -d meilisearch api web
 ```
 
-### 4. Start the stack
+For a realistic search comparison, restore a Meilisearch dump into `runtime/meili-shadow` first. Do not point two running Meilisearch processes at the same `data.ms` directory.
+
+Validate the staged API before enabling either worker:
 
 ```bash
-# From parent directory
-docker compose -f character-archive/docker-compose.yml up -d
+curl -fsS http://127.0.0.1:16969/health/ready
+curl -fsS http://127.0.0.1:16969/api/sync/status
+curl -fsS http://127.0.0.1:16969/api/vector/status
+docker compose logs --tail=200 api web meilisearch
+```
 
-# Or from character-archive directory
+## Cutover
+
+1. Stop the process-compose API and the old sync/vector services so there is one writer.
+2. Stop the validation stack; its API is still reading `runtime/state/cards.db`.
+3. Take a final SQLite backup into `runtime/state/cards.db` and copy the final `config.json`.
+4. Start the complete stack on the normal ports.
+5. Compare card counts, source counts, lexical results, and vector status before removing the old service definitions.
+
+```bash
+docker compose down
 docker compose up -d
+docker compose ps
+docker compose logs --tail=200 api archive-worker vector-worker meilisearch
 ```
 
-### 5. Access the application
+The service memory ceilings are:
 
-- **Frontend UI**: http://localhost:3177
-- **Backend API**: http://localhost:6969
-- **Meilisearch**: http://localhost:7700
+| Service | Limit |
+|---|---:|
+| API | 4 GiB |
+| Web | 1 GiB |
+| Archive worker | 4 GiB |
+| Vector worker | 8 GiB |
+| Meilisearch | 32 GiB, with a 24 GiB indexing budget |
 
-## Configuration
+Container logs rotate at 25 MiB with four files. Meilisearch has no swap allowance beyond its 32 GiB cap.
 
-### config.json
+## Database choice
 
-The container creates a default `config.json` on first run. To customize:
+This deployment deliberately keeps SQLite. The archive has one human user and serialized background writers, while WAL mode, a 15-second busy timeout, bounded mmap, online backups, and durable work tables cover the current reliability needs without adding a second database system. PostgreSQL support remains a later portability project rather than part of this cutover.
 
-1. Create your own config.json:
+## Operations
 
-```json
-{
-    "port": 6969,
-    "ip": "0.0.0.0",
-    "autoUpdateMode": false,
-    "autoUpdateInterval": 60,
-    "apikey": "YOUR_CHUB_API_KEY",
-    "meilisearch": {
-        "enabled": true,
-        "host": "http://meilisearch:7700",
-        "apiKey": "",
-        "indexName": "cards"
-    },
-    "vectorSearch": {
-        "enabled": false,
-        "ollamaUrl": "http://host.docker.internal:11434",
-        "embedModel": "snowflake-arctic-embed2:latest"
-    },
-    "sillyTavern": {
-        "enabled": false,
-        "baseUrl": ""
-    },
-    "ctSync": {
-        "enabled": false,
-        "bearerToken": "",
-        "cfClearance": "",
-        "session": ""
-    }
-}
-```
-
-2. Mount it as read-only in docker-compose.yml (already configured)
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_PORT` | 6969 | Backend API port on host |
-| `FRONTEND_PORT` | 3177 | Frontend UI port on host |
-| `MEILI_PORT` | 7700 | Meilisearch port on host |
-| `MEILI_MASTER_KEY` | (empty) | Meilisearch authentication key |
-| `OLLAMA_URL` | http://host.docker.internal:11434 | Ollama server for vector search |
-| `LOG_LEVEL` | INFO | Application log level |
-
-## Volume Mapping
-
-| Container Path | Host Path | Description |
-|----------------|-----------|-------------|
-| `/app/static` | `./static` | Card images and JSON files |
-| `/app/cards.db` | `./cards.db` | SQLite database |
-| `/app/config.json` | `./config.json` | Application configuration |
-| `/meili_data` | `./meili-data` | Meilisearch index data |
-
-## Using with Ollama
-
-To enable vector/semantic search, you need Ollama running:
-
-### Option 1: Host Machine Ollama (Recommended)
-
-1. Install and start Ollama on your host:
-   ```bash
-   ollama serve
-   ollama pull snowflake-arctic-embed2
-   ```
-
-2. The default `OLLAMA_URL=http://host.docker.internal:11434` will work
-
-### Option 2: Remote Ollama Server
-
-Set in `.env`:
-```env
-OLLAMA_URL=http://your-ollama-server:11434
-```
-
-### Option 3: Ollama in Docker (Advanced)
-
-Add to docker-compose.yml:
-```yaml
-services:
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./ollama-data:/root/.ollama
-    networks:
-      - archive-net
-```
-
-Then set `OLLAMA_URL=http://ollama:11434`
-
-## Building the Image
-
-### Standard Build
+Manual source runs are durable:
 
 ```bash
-# From parent directory (character-foundry/)
-docker build -f character-archive/Dockerfile -t character-archive .
+curl -X POST http://127.0.0.1:6969/api/sync/runs \
+  -H 'content-type: application/json' \
+  -d '{"sources":["chub","ct","risuai","wyvern"]}'
 ```
 
-### Build with Custom Tag
+Character Tavern repair is dry-run by default. `--apply` creates a timestamped SQLite backup and manifest, quarantines duplicate artifacts, and then performs the full detail refetch. Add `--no-refetch` to split those phases.
 
 ```bash
-docker build -f character-archive/Dockerfile -t character-archive:v1.0.0 .
+docker compose run --rm archive-worker node scripts/repair-ct.js
+docker compose run --rm archive-worker node scripts/repair-ct.js --apply
 ```
 
-### Build Arguments
+Create or resume a shadow vector generation through `POST /api/vector/reconcile`. The vector worker pauses during archive sync and whenever Meilisearch has more than 200 pending tasks. Generation activation requires a passing 120-query benchmark report and explicit approval; destructive flushing remains CLI-only.
 
-The Dockerfile doesn't currently use build arguments, but the build context must include:
-- `character-archive/` - This application
-- `character-foundry/packages/` - Workspace packages (core, schemas, image-utils)
-
-## Management Commands
-
-### View Logs
+Review and edit the generated fixture before treating it as a quality gate. The benchmark also enforces absolute hit-rate, MRR, and top-one floors, but hand-written intent queries are more representative than card names or taglines.
 
 ```bash
-# All services
-docker compose -f character-archive/docker-compose.yml logs -f
-
-# Specific service
-docker compose -f character-archive/docker-compose.yml logs -f app
-docker compose -f character-archive/docker-compose.yml logs -f meilisearch
+docker compose run --rm vector-worker node scripts/build-vector-benchmark-fixture.js
+docker compose run --rm vector-worker node scripts/benchmark-vector-generations.js \
+  --baseline 1 --candidate 2
 ```
 
-### Stop Services
+## Rollback
 
-```bash
-docker compose -f character-archive/docker-compose.yml down
-```
+Stop the Docker application containers, restart the old services, and point them at the untouched original `cards.db`, `static`, and Meilisearch directories. The staged state directory and shadow indexes can be retained for diagnosis. Do not run old and new archive/vector workers simultaneously.
 
-### Restart Services
-
-```bash
-docker compose -f character-archive/docker-compose.yml restart
-```
-
-### Rebuild After Code Changes
-
-```bash
-docker compose -f character-archive/docker-compose.yml up -d --build
-```
-
-### Shell Access
-
-```bash
-docker exec -it character-archive sh
-```
-
-### Database Maintenance
-
-```bash
-# Run sync manually
-docker exec character-archive node scripts/sync.js
-
-# Sync Meilisearch index
-docker exec character-archive node scripts/sync-meilisearch.js
-
-# Vector backfill (if Ollama configured)
-docker exec character-archive node scripts/etl_cards_vector_search.js
-```
-
-## Troubleshooting
-
-### Container won't start
-
-Check logs:
-```bash
-docker compose -f character-archive/docker-compose.yml logs app
-```
-
-Common issues:
-- Missing `config.json` - Container creates default, but verify permissions
-- Database locked - Ensure no other process is accessing cards.db
-- Port conflict - Change `APP_PORT` or `FRONTEND_PORT` in `.env`
-
-### Meilisearch connection failed
-
-1. Verify Meilisearch is healthy:
-   ```bash
-   docker compose -f character-archive/docker-compose.yml ps
-   curl http://localhost:7700/health
-   ```
-
-2. Check config.json has correct host:
-   ```json
-   "meilisearch": {
-       "host": "http://meilisearch:7700"
-   }
-   ```
-
-### Can't connect from other machines
-
-By default, ports are bound to all interfaces. If using a firewall:
-```bash
-# Allow ports
-sudo ufw allow 3177/tcp
-sudo ufw allow 6969/tcp
-```
-
-### Permission denied on volumes
-
-Ensure directories are writable:
-```bash
-chmod 755 static meili-data
-chmod 644 cards.db config.json
-```
-
-### Vector search not working
-
-1. Verify Ollama is accessible:
-   ```bash
-   curl http://localhost:11434/api/tags
-   ```
-
-2. Ensure model is pulled:
-   ```bash
-   ollama pull snowflake-arctic-embed2
-   ```
-
-3. Check config.json has vectorSearch enabled:
-   ```json
-   "vectorSearch": {
-       "enabled": true,
-       "ollamaUrl": "http://host.docker.internal:11434"
-   }
-   ```
-
-## Resource Usage
-
-Typical resource consumption:
-
-| Service | RAM | CPU | Storage |
-|---------|-----|-----|---------|
-| character-archive | 200-500MB | Low | Depends on static/ |
-| meilisearch | 500MB-2GB | Low-Medium | ~10-20% of indexed data |
-
-For large collections (100k+ cards), consider:
-- Allocating 4GB+ RAM to Meilisearch
-- Using SSD storage for meili-data/
-- Setting `MEILI_HTTP_PAYLOAD_SIZE_LIMIT` for large batch imports
+Scheduled Synology dumps and delta artifact backups remain a later operational phase; they are intentionally not coupled to this cutover.

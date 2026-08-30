@@ -32,7 +32,8 @@ const log = logger.scoped('DB');
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATABASE_FILE = path.join(__dirname, '../cards.db');
+const DATABASE_FILE = process.env.CHARACTER_ARCHIVE_DB_FILE
+    || path.join(process.env.CHARACTER_ARCHIVE_STATE_DIR || path.join(__dirname, '..'), 'cards.db');
 
 /**
  * Initialize database connection

@@ -114,6 +114,148 @@ export function ensureSchema(db) {
 
         CREATE INDEX IF NOT EXISTS idx_vector_index_queue_card ON vector_index_queue(cardId);
         CREATE INDEX IF NOT EXISTS idx_vector_index_queue_action ON vector_index_queue(action);
+        DELETE FROM vector_index_queue
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM vector_index_queue
+            GROUP BY cardId
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_index_queue_card_unique ON vector_index_queue(cardId);
+
+        CREATE TABLE IF NOT EXISTS vector_generations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            model_name TEXT NOT NULL,
+            embedder_name TEXT NOT NULL,
+            dimensions INTEGER NOT NULL CHECK(dimensions > 0),
+            cards_index TEXT NOT NULL,
+            chunks_index TEXT,
+            status TEXT NOT NULL DEFAULT 'building'
+                CHECK(status IN ('building','ready','active','failed','retired')),
+            active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0,1)),
+            cursor_card_id TEXT,
+            expected_cards INTEGER NOT NULL DEFAULT 0,
+            indexed_cards INTEGER NOT NULL DEFAULT 0,
+            indexed_chunks INTEGER NOT NULL DEFAULT 0,
+            failed_items INTEGER NOT NULL DEFAULT 0,
+            quality_report TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            activated_at TEXT,
+            completed_at TEXT,
+            retire_after TEXT
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_generations_one_active
+        ON vector_generations(active) WHERE active = 1;
+        CREATE INDEX IF NOT EXISTS idx_vector_generations_status
+        ON vector_generations(status, created_at);
+
+        CREATE TABLE IF NOT EXISTS vector_work_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            generation_id INTEGER NOT NULL,
+            card_id TEXT NOT NULL,
+            action TEXT NOT NULL DEFAULT 'upsert' CHECK(action IN ('upsert','delete')),
+            status TEXT NOT NULL DEFAULT 'queued'
+                CHECK(status IN ('queued','leased','submitted','completed','retry','dead')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            revision INTEGER NOT NULL DEFAULT 0,
+            leased_revision INTEGER,
+            next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            lease_owner TEXT,
+            lease_expires_at TEXT,
+            meili_task_uids TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            UNIQUE(generation_id, card_id),
+            FOREIGN KEY (generation_id) REFERENCES vector_generations(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_vector_work_items_claim
+        ON vector_work_items(generation_id, status, next_attempt_at, id);
+        CREATE INDEX IF NOT EXISTS idx_vector_work_items_lease
+        ON vector_work_items(status, lease_expires_at);
+
+        CREATE TABLE IF NOT EXISTS sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_type TEXT NOT NULL DEFAULT 'manual'
+                CHECK(trigger_type IN ('manual','scheduled','startup-catchup','legacy-api','repair')),
+            schedule_key TEXT UNIQUE,
+            requested_sources TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'queued'
+                CHECK(status IN ('queued','running','success','partial','failed','cancelled','skipped')),
+            scheduled_for TEXT,
+            requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            started_at TEXT,
+            finished_at TEXT,
+            lease_owner TEXT,
+            lease_expires_at TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
+            current_source TEXT,
+            added INTEGER NOT NULL DEFAULT 0,
+            updated INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            errors INTEGER NOT NULL DEFAULT 0,
+            error_summary TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_runs_claim
+        ON sync_runs(status, requested_at, id);
+        CREATE INDEX IF NOT EXISTS idx_sync_runs_lease
+        ON sync_runs(status, lease_expires_at);
+        CREATE INDEX IF NOT EXISTS idx_sync_runs_finished
+        ON sync_runs(finished_at);
+
+        CREATE TABLE IF NOT EXISTS sync_source_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued'
+                CHECK(status IN ('queued','running','success','partial','failed','cancelled','skipped')),
+            started_at TEXT,
+            finished_at TEXT,
+            added INTEGER NOT NULL DEFAULT 0,
+            updated INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            errors INTEGER NOT NULL DEFAULT 0,
+            cursor TEXT,
+            error_message TEXT,
+            UNIQUE(run_id, source),
+            FOREIGN KEY (run_id) REFERENCES sync_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_source_runs_run
+        ON sync_source_runs(run_id, id);
+
+        CREATE TABLE IF NOT EXISTS sync_run_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            source TEXT,
+            event_type TEXT NOT NULL,
+            payload TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (run_id) REFERENCES sync_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_run_events_run
+        ON sync_run_events(run_id, id);
+
+        CREATE TABLE IF NOT EXISTS card_source_aliases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            source_id TEXT,
+            source_path TEXT,
+            canonical_card_id INTEGER NOT NULL,
+            retired_card_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source, source_path, retired_card_id),
+            FOREIGN KEY (canonical_card_id) REFERENCES cards(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_card_source_aliases_canonical
+        ON card_source_aliases(canonical_card_id);
 
         CREATE TABLE IF NOT EXISTS png_optimization_queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,36 +284,75 @@ export function ensureSchema(db) {
             INSERT INTO search_index_queue(cardId, action) VALUES (OLD.id, 'delete');
         END;
 
-        CREATE TRIGGER IF NOT EXISTS trg_cards_after_insert_vector_queue
+        DROP TRIGGER IF EXISTS trg_cards_after_insert_vector_queue;
+        DROP TRIGGER IF EXISTS trg_cards_after_update_vector_queue;
+        DROP TRIGGER IF EXISTS trg_cards_after_delete_vector_queue;
+
+        CREATE TRIGGER trg_cards_after_insert_vector_queue
         AFTER INSERT ON cards
         BEGIN
-            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert');
+            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert')
+            ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
+            UPDATE vector_generations
+            SET status = 'building', completed_at = NULL
+            WHERE status = 'ready';
+            INSERT INTO vector_work_items (generation_id, card_id, action)
+            SELECT id, CAST(NEW.id AS TEXT), 'upsert'
+            FROM vector_generations WHERE active = 1 OR status = 'building'
+            ON CONFLICT(generation_id, card_id) DO UPDATE SET
+                action = 'upsert', status = 'queued', revision = vector_work_items.revision + 1,
+                next_attempt_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;
         END;
 
-        CREATE TRIGGER IF NOT EXISTS trg_cards_after_update_vector_queue
+        CREATE TRIGGER trg_cards_after_update_vector_queue
         AFTER UPDATE ON cards
         BEGIN
-            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert');
+            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert')
+            ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
+            UPDATE vector_generations
+            SET status = 'building', completed_at = NULL
+            WHERE status = 'ready';
+            INSERT INTO vector_work_items (generation_id, card_id, action)
+            SELECT id, CAST(NEW.id AS TEXT), 'upsert'
+            FROM vector_generations WHERE active = 1 OR status = 'building'
+            ON CONFLICT(generation_id, card_id) DO UPDATE SET
+                action = 'upsert', status = 'queued', revision = vector_work_items.revision + 1,
+                next_attempt_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;
         END;
 
-        CREATE TRIGGER IF NOT EXISTS trg_cards_after_delete_vector_queue
+        CREATE TRIGGER trg_cards_after_delete_vector_queue
         AFTER DELETE ON cards
         BEGIN
-            INSERT INTO vector_index_queue(cardId, action) VALUES (OLD.id, 'delete');
+            INSERT INTO vector_index_queue(cardId, action) VALUES (OLD.id, 'delete')
+            ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
+            UPDATE vector_generations
+            SET status = 'building', completed_at = NULL
+            WHERE status = 'ready';
+            INSERT INTO vector_work_items (generation_id, card_id, action)
+            SELECT id, CAST(OLD.id AS TEXT), 'delete'
+            FROM vector_generations WHERE active = 1 OR status = 'building'
+            ON CONFLICT(generation_id, card_id) DO UPDATE SET
+                action = 'delete', status = 'queued', revision = vector_work_items.revision + 1,
+                next_attempt_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;
         END;
 
-        CREATE TRIGGER IF NOT EXISTS trg_cards_after_insert_png_opt_queue
+        DROP TRIGGER IF EXISTS trg_cards_after_insert_png_opt_queue;
+        DROP TRIGGER IF EXISTS trg_cards_after_update_png_opt_queue;
+
+        CREATE TRIGGER trg_cards_after_insert_png_opt_queue
         AFTER INSERT ON cards
         WHEN NEW.source != 'risuai'
         BEGIN
-            INSERT OR IGNORE INTO png_optimization_queue(cardId) VALUES (NEW.id);
+            INSERT INTO png_optimization_queue(cardId) VALUES (NEW.id)
+            ON CONFLICT(cardId) DO NOTHING;
         END;
 
-        CREATE TRIGGER IF NOT EXISTS trg_cards_after_update_png_opt_queue
+        CREATE TRIGGER trg_cards_after_update_png_opt_queue
         AFTER UPDATE ON cards
         WHEN NEW.source != 'risuai'
         BEGIN
-            INSERT OR IGNORE INTO png_optimization_queue(cardId) VALUES (NEW.id);
+            INSERT INTO png_optimization_queue(cardId) VALUES (NEW.id)
+            ON CONFLICT(cardId) DO NOTHING;
         END;
 
         CREATE TABLE IF NOT EXISTS card_embedding_meta (
@@ -240,6 +421,8 @@ export function ensureSchema(db) {
     addColumnIfMissing(db, 'cards', 'sourceId', 'TEXT');
     addColumnIfMissing(db, 'cards', 'sourcePath', 'TEXT');
     addColumnIfMissing(db, 'cards', 'sourceUrl', 'TEXT');
+    addColumnIfMissing(db, 'vector_work_items', 'revision', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'vector_work_items', 'leased_revision', 'INTEGER');
 
     db.prepare("UPDATE cards SET source = 'chub' WHERE source IS NULL OR source = ''").run();
 }

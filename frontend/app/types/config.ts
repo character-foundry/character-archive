@@ -37,11 +37,15 @@ export const defaultCtSyncState = {
 
 export const defaultVectorSearchState = {
     enabled: false,
+    enableChunks: true,
     cardsIndex: 'cards_vsem',
     chunksIndex: 'card_chunks',
     embedModel: 'snowflake-arctic-embed2:latest',
     embedderName: 'arctic2-1024',
     embedDimensions: 1024,
+    embeddingProvider: 'ollama',
+    embeddingUrl: '',
+    embeddingApiKey: '',
     ollamaUrl: 'http://127.0.0.1:11434',
     semanticRatio: 0.4,
     cardsMultiplier: 2,

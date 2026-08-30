@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   images: {
     unoptimized: true,
   },
@@ -12,16 +13,15 @@ const nextConfig: NextConfig = {
     root: __dirname,
   },
   async rewrites() {
-    // Rewrites proxy to localhost since API runs on the same machine
-    // This works even when accessed from LAN - Next.js server handles the proxy
+    const apiUrl = process.env.INTERNAL_API_URL || 'http://localhost:6969';
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:6969/api/:path*',
+        destination: `${apiUrl}/api/:path*`,
       },
       {
         source: '/static/:path*',
-        destination: 'http://localhost:6969/static/:path*',
+        destination: `${apiUrl}/static/:path*`,
       },
     ];
   },

@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import { MeiliSearch } from 'meilisearch';
-import { loadConfig } from '../config.js';
+import { loadConfig } from '../config-loader.js';
+
+function readBooleanFlag(value, fallback = false) {
+    if (value === undefined || value === null || value === '') {
+        return fallback;
+    }
+    const normalized = String(value).trim().toLowerCase();
+    return !['0', 'false', 'no', 'off'].includes(normalized);
+}
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -144,12 +152,15 @@ async function main() {
     const dimensions = Number(process.env.EMBED_DIMENSIONS || vector.embedDimensions || 0);
     const cardsIndex = (process.env.MEILI_CARDS_INDEX || vector.cardsIndex || 'cards_vsem').trim();
     const chunksIndex = (process.env.MEILI_CHUNKS_INDEX || vector.chunksIndex || 'card_chunks').trim();
+    const enableChunks = readBooleanFlag(process.env.MEILI_ENABLE_CHUNKS, vector.enableChunks !== false);
 
-    console.log(`[INFO] Ensuring embedders for ${cardsIndex} / ${chunksIndex} on ${host}`);
+    console.log(`[INFO] Ensuring embedders for ${cardsIndex}${enableChunks ? ` / ${chunksIndex}` : ' (chunks disabled)'} on ${host}`);
 
     const client = new MeiliSearch({ host, apiKey });
     await ensureEmbedder(cardsIndex, embedderName, dimensions, client);
-    await ensureEmbedder(chunksIndex, embedderName, dimensions, client);
+    if (enableChunks) {
+        await ensureEmbedder(chunksIndex, embedderName, dimensions, client);
+    }
 
     console.log('[INFO] Embedder settings verified');
     process.exit(0);

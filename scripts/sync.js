@@ -1,4 +1,4 @@
-import { loadConfig } from '../config.js';
+import { loadConfig } from '../config-loader.js';
 import { syncCards } from '../backend/services/scraper.js';
 import { logger } from '../backend/utils/logger.js';
 import { initDatabase } from '../backend/database.js';

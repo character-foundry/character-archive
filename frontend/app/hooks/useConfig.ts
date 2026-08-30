@@ -152,9 +152,10 @@ export function useConfig(): UseConfigResult {
 
       const previousVector = previousConfig.vectorSearch || defaultVectorSearchState;
       const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-      const vectorConfig = {
+      const vectorConfig: NonNullable<Config["vectorSearch"]> = {
         ...previousVector,
         enabled: data.get("vector_enabled") === "on",
+        enableChunks: data.get("vector_enableChunks") === "on",
         cardsIndex: getStringValue("vector_cardsIndex", { trim: true }) || previousVector.cardsIndex,
         chunksIndex: getStringValue("vector_chunksIndex", { trim: true }) || previousVector.chunksIndex,
         embedModel: getStringValue("vector_embedModel", { trim: true }) || previousVector.embedModel,
@@ -166,6 +167,9 @@ export function useConfig(): UseConfigResult {
             previousVector.embedDimensions ?? defaultVectorSearchState.embedDimensions,
           ),
         ),
+        embeddingProvider: data.get("vector_embeddingProvider") === "openai" ? "openai" : "ollama",
+        embeddingUrl: getStringValue("vector_embeddingUrl", { trim: true }),
+        embeddingApiKey: getStringValue("vector_embeddingApiKey", { trim: true }),
         ollamaUrl: getStringValue("vector_ollamaUrl", { trim: true }) || previousVector.ollamaUrl,
         semanticRatio: clamp(
           parseFloatValue("vector_semanticRatio", previousVector.semanticRatio ?? defaultVectorSearchState.semanticRatio),
@@ -226,9 +230,12 @@ export function useConfig(): UseConfigResult {
         const refreshedConfig = await fetchConfigApi();
         setConfig(refreshedConfig);
         setSaveStatus({ type: "success", message: "Settings saved." });
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Failed to save config", err);
-        setSaveStatus({ type: "error", message: err?.message || "Failed to save settings." });
+        setSaveStatus({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to save settings.",
+        });
       } finally {
         setLoading(false);
       }

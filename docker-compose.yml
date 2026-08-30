@@ -1,89 +1,152 @@
-# Character Archive Docker Compose
-#
-# Usage:
-#   # From parent directory (character-foundry/)
-#   docker compose -f character-archive/docker-compose.yml up -d
-#
-#   # Or from this directory with explicit context
-#   docker compose up -d
-#
-# First-time setup:
-#   1. Copy .env.example to .env and configure
-#   2. Create data directories: mkdir -p static meili-data
-#   3. Create config.json (or let container create default)
-#   4. Run: docker compose up -d
-
-version: '3.8'
+x-app: &app
+  image: character-archive:${ARCHIVE_IMAGE_TAG:-latest}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    additional_contexts:
+      foundry: ../character-foundry
+  environment: &app-environment
+    NODE_ENV: production
+    CHARACTER_ARCHIVE_STATE_DIR: /state
+    CHARACTER_ARCHIVE_DB_FILE: /state/cards.db
+    CHARACTER_ARCHIVE_CONFIG_FILE: /state/config.json
+    CHARACTER_ARCHIVE_STATIC_DIR: /app/static
+    CHARACTER_ARCHIVE_DATA_DIR: /app/data
+    CHARACTER_ARCHIVE_BACKUP_DIR: /app/backup
+    MEILI_HOST: http://meilisearch:7700
+    MEILI_KEY: ${MEILI_MASTER_KEY:-}
+    EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+    EMBEDDING_URL: ${EMBEDDING_URL:-https://inference.local.vega.nyc}
+    EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+    ALLOWED_IPS: 172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
+    SQLITE_MMAP_SIZE: 536870912
+    SQLITE_BUSY_TIMEOUT_MS: 15000
+  volumes: &app-volumes
+    - ${ARCHIVE_STATE_DIR:-./runtime/state}:/state
+    - ${ARCHIVE_STATIC_DIR:-./static}:/app/static
+    - ${ARCHIVE_DATA_DIR:-./data}:/app/data
+    - ${ARCHIVE_BACKUP_DIR:-./backup}:/app/backup
+  extra_hosts:
+    - host.docker.internal:host-gateway
+  networks: [archive-net]
+  restart: unless-stopped
+  logging: &app-logging
+    driver: json-file
+    options:
+      max-size: 25m
+      max-file: "4"
 
 services:
-  # ==========================================================================
-  # Character Archive Application
-  # ==========================================================================
-  app:
-    build:
-      context: ..
-      dockerfile: character-archive/Dockerfile
-    image: character-archive:latest
-    container_name: character-archive
-    ports:
-      - "${APP_PORT:-6969}:6969"     # Backend API
-      - "${FRONTEND_PORT:-3177}:3177" # Frontend UI
-    volumes:
-      # Persistent data (REQUIRED)
-      - ./static:/app/static                    # Card images (~130GB)
-      - ./cards.db:/app/cards.db                # SQLite database
-      # Configuration
-      - ./config.json:/app/config.json:ro       # User config (read-only)
+  api:
+    <<: *app
+    container_name: character-archive-api
+    command: ["node", "server.js"]
     environment:
-      - NODE_ENV=production
-      - PORT=6969
-      - HOST=0.0.0.0
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Allow Docker network IPs for inter-container communication
-      - ALLOWED_IPS=172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
-      # Ollama for vector search (optional - uses host machine)
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      <<: *app-environment
+      HOST: 0.0.0.0
+      PORT: 6969
+    ports:
+      - ${APP_PORT:-6969}:6969
     depends_on:
       meilisearch:
         condition: service_healthy
+    mem_limit: 4g
+    memswap_limit: 4g
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6969/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: unless-stopped
-    networks:
-      - archive-net
-    # Allow access to host for Ollama
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:6969/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
-  # ==========================================================================
-  # Meilisearch - Full-text search engine
-  # ==========================================================================
-  meilisearch:
-    image: getmeili/meilisearch:v1.11
-    container_name: meilisearch
-    ports:
-      - "${MEILI_PORT:-7700}:7700"
-    volumes:
-      - ./meili-data:/meili_data
+  web:
+    <<: *app
+    container_name: character-archive-web
+    command: ["node", "frontend/server.js"]
     environment:
-      - MEILI_ENV=production
-      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-}
-      - MEILI_NO_ANALYTICS=true
-      # Increase payload limit for batch indexing
-      - MEILI_HTTP_PAYLOAD_SIZE_LIMIT=104857600
+      <<: *app-environment
+      INTERNAL_API_URL: http://api:6969
+      HOSTNAME: 0.0.0.0
+      PORT: 3177
+    ports:
+      - ${FRONTEND_PORT:-3177}:3177
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 1g
+    memswap_limit: 1g
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7700/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3177/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  archive-worker:
+    <<: *app
+    container_name: character-archive-worker
+    command: ["node", "scripts/archive-worker.js"]
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 4g
+    memswap_limit: 4g
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  vector-worker:
+    <<: *app
+    container_name: character-vector-worker
+    command: ["node", "scripts/vector-worker.js"]
+    environment:
+      <<: *app-environment
+      VECTOR_WORKER_BATCH_SIZE: ${VECTOR_WORKER_BATCH_SIZE:-100}
+      VECTOR_MAX_MEILI_TASK_BACKLOG: ${VECTOR_MAX_MEILI_TASK_BACKLOG:-200}
+    depends_on:
+      api:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    mem_limit: 8g
+    memswap_limit: 8g
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.40.0
+    container_name: character-archive-meilisearch
+    ports:
+      - ${MEILI_PORT:-7700}:7700
+    volumes:
+      - ${MEILI_DATA_DIR:-./data.ms}:/meili_data/data.ms
+      - ${MEILI_DUMP_DIR:-./dumps}:/meili_data/dumps
+      - ${MEILI_SNAPSHOT_DIR:-./snapshots}:/meili_data/snapshots
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-}
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_DB_PATH: /meili_data/data.ms
+      MEILI_DUMP_DIR: /meili_data/dumps
+      MEILI_SNAPSHOT_DIR: /meili_data/snapshots
+      MEILI_MAX_INDEXING_MEMORY: 24GiB
+      MEILI_HTTP_PAYLOAD_SIZE_LIMIT: 104857600
+    mem_limit: 32g
+    memswap_limit: 32g
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:7700/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
-    networks:
-      - archive-net
+    logging: *app-logging
+    networks: [archive-net]
 
 networks:
   archive-net:

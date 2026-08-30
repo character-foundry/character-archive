@@ -70,7 +70,7 @@ export class WyvernScraper extends BaseScraper {
             return response.data.results || [];
         } catch (error) {
             this.log.error(`Failed to fetch list page ${page}`, error.message);
-            return [];
+            throw new Error(`Wyvern list page ${page} failed: ${error.message}`, { cause: error });
         }
     }
 

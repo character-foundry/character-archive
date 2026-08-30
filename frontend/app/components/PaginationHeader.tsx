@@ -18,7 +18,6 @@ interface PaginationHeaderProps {
   pageLabel: string;
   isLoading: boolean;
   syncing: boolean;
-  ctSyncing: boolean;
   darkMode: boolean;
   onGoToFirstPage: () => void;
   onNavigateBack: () => void;
@@ -38,7 +37,6 @@ export function PaginationHeader({
   pageLabel,
   isLoading,
   syncing,
-  ctSyncing,
   darkMode,
   onGoToFirstPage,
   onNavigateBack,
@@ -89,13 +87,13 @@ export function PaginationHeader({
           <button
             type="button"
             onClick={onSync}
-            disabled={syncing || ctSyncing}
+            disabled={syncing}
             className="flex items-center gap-2 rounded-full bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-purple-500 disabled:bg-purple-400"
-            aria-label="Sync all sources"
-            title="Sync Chub + Character Tavern"
+            aria-label="Sync all enabled sources"
+            title="Sync all enabled sources"
           >
-            {syncing || ctSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-            {syncing || ctSyncing ? "Syncing..." : "Sync"}
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+            {syncing ? "Syncing..." : "Sync All"}
           </button>
           <button
             type="button"

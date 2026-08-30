@@ -1,12 +1,27 @@
 'use client';
 
-import { Fragment, type RefObject, useState } from 'react';
+import { Fragment, type RefObject, useEffect, useState } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { X, Loader2, Save, Download, Settings, RefreshCw, Database, Search, User, Globe, FileJson } from 'lucide-react';
 import clsx from 'clsx';
-import type { Config } from '@/lib/types';
+import type { Config, SyncRun } from '@/lib/types';
 
 type MessageStatus = { type: 'success' | 'error'; message: string } | null;
+type VectorGenerationStatus = {
+    id: number;
+    name: string;
+    status: string;
+    active: boolean;
+    completed_items: number;
+    total_items: number;
+    dead_items: number;
+    dimensions: number;
+};
+type VectorStatus = {
+    runtime: { ready: boolean; model: string; dimensions: number; embeddingCircuit: { open: boolean; lastError?: string | null } };
+    generations: VectorGenerationStatus[];
+    queue: { durable: number; dead: number; legacy: number };
+};
 
 type SettingsModalProps = {
     showSettings: boolean;
@@ -48,10 +63,15 @@ type SettingsModalProps = {
     };
     defaultVectorSearchState: {
         enabled: boolean;
+        enableChunks: boolean;
         cardsIndex: string;
         chunksIndex: string;
         embedModel: string;
         embedderName: string;
+        embedDimensions: number;
+        embeddingProvider: string;
+        embeddingUrl: string;
+        embeddingApiKey: string;
         ollamaUrl: string;
         semanticRatio: number;
         cardsMultiplier: number;
@@ -67,6 +87,22 @@ type SettingsModalProps = {
         rating: string;
         bearerToken: string;
     };
+    // Sync controls (passed from useSync)
+    startChubSync: () => Promise<void>;
+    chubSyncing: boolean;
+    chubSyncStatus: string | null;
+    startCtSync: () => Promise<void>;
+    ctSyncing: boolean;
+    ctSyncStatus: string | null;
+    startWyvernSync: () => Promise<void>;
+    wyvernSyncing: boolean;
+    wyvernSyncStatus: string | null;
+    startRisuSync: () => Promise<void>;
+    risuSyncing: boolean;
+    risuSyncStatus: string | null;
+    anySyncing: boolean;
+    latestSyncRun: SyncRun | null;
+    cancelAllSyncs: () => void | Promise<void>;
 };
 
 type TabId = 'sync-control' | 'general' | 'silly' | 'ct' | 'chub' | 'vector' | 'risuai' | 'wyvern';
@@ -91,8 +127,56 @@ export const SettingsModal = ({
     defaultCtSyncState,
     defaultVectorSearchState,
     defaultWyvernSyncState,
+    startChubSync,
+    chubSyncStatus,
+    ctSyncing,
+    ctSyncStatus,
+    wyvernSyncing,
+    wyvernSyncStatus,
+    risuSyncing,
+    risuSyncStatus,
+    anySyncing,
+    latestSyncRun,
+    cancelAllSyncs,
 }: SettingsModalProps) => {
     const [activeTab, setActiveTab] = useState<TabId>('sync-control');
+    const [vectorStatus, setVectorStatus] = useState<VectorStatus | null>(null);
+    const [vectorAction, setVectorAction] = useState<MessageStatus>(null);
+
+    useEffect(() => {
+        if (!showSettings || activeTab !== 'vector') return;
+        let cancelled = false;
+        const load = async () => {
+            try {
+                const response = await fetch('/api/vector/status', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`Vector status failed (${response.status})`);
+                if (!cancelled) setVectorStatus(await response.json());
+            } catch (error) {
+                if (!cancelled) setVectorAction({ type: 'error', message: error instanceof Error ? error.message : 'Vector status failed' });
+            }
+        };
+        load();
+        const timer = setInterval(load, 5000);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, [showSettings, activeTab]);
+
+    const reconcileVectors = async () => {
+        setVectorAction(null);
+        try {
+            const response = await fetch('/api/vector/reconcile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'Vector reconcile failed');
+            setVectorAction({ type: 'success', message: `Generation #${payload.id} is ${payload.status}.` });
+            const statusResponse = await fetch('/api/vector/status', { cache: 'no-store' });
+            if (statusResponse.ok) setVectorStatus(await statusResponse.json());
+        } catch (error) {
+            setVectorAction({ type: 'error', message: error instanceof Error ? error.message : 'Vector reconcile failed' });
+        }
+    };
 
     const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
         { id: 'sync-control', label: 'Sync Control', icon: <RefreshCw className="h-4 w-4" /> },
@@ -169,6 +253,72 @@ export const SettingsModal = ({
                             >
                                 {/* Tab: Sync Control */}
                                 <div className={clsx('space-y-6', activeTab !== 'sync-control' && 'hidden')}>
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                        <div className="flex flex-wrap items-center justify-between gap-4">
+                                            <div>
+                                                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                                                    Manual Sync
+                                                </h3>
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                    Runs all enabled sources together (Chub, Character Tavern, RisuAI, Wyvern).
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-3">
+                                                <button
+                                                    type="button"
+                                                    onClick={async () => startChubSync()}
+                                                    disabled={anySyncing}
+                                                    className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-500 disabled:bg-indigo-400"
+                                                >
+                                                    {anySyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                                    {anySyncing ? 'Syncing...' : 'Sync All'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => cancelAllSyncs()}
+                                                    disabled={!anySyncing}
+                                                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                                                >
+                                                    <X className="h-4 w-4" />
+                                                    Cancel All
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                                            {chubSyncStatus && <p>{chubSyncStatus}</p>}
+                                            {ctSyncStatus && <p>{ctSyncStatus}</p>}
+                                            {risuSyncStatus && <p>{risuSyncStatus}</p>}
+                                            {wyvernSyncStatus && <p>{wyvernSyncStatus}</p>}
+                                            {!chubSyncStatus && !ctSyncStatus && !risuSyncStatus && !wyvernSyncStatus && (
+                                                <p>No syncs running.</p>
+                                            )}
+                                        </div>
+                                        {latestSyncRun && (
+                                            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-700 dark:bg-slate-800/60">
+                                                <div className="flex flex-wrap justify-between gap-2 font-medium text-slate-700 dark:text-slate-200">
+                                                    <span>Run #{latestSyncRun.id} · {latestSyncRun.status}</span>
+                                                    <span>{latestSyncRun.added} added · {latestSyncRun.updated} updated · {latestSyncRun.errors} errors</span>
+                                                </div>
+                                                {latestSyncRun.current_source && (
+                                                    <p className="mt-2 text-indigo-600 dark:text-indigo-300">Current source: {latestSyncRun.current_source}</p>
+                                                )}
+                                                <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                                                    {latestSyncRun.sources.map((source) => (
+                                                        <p key={source.source} className={source.errors ? 'text-rose-600 dark:text-rose-300' : 'text-slate-500 dark:text-slate-400'}>
+                                                            {source.source}: {source.status} · +{source.added} / ~{source.updated} / {source.errors} errors
+                                                            {source.error_message ? ` · ${source.error_message}` : ''}
+                                                        </p>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {(ctSyncing || risuSyncing || wyvernSyncing) && (
+                                            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                                                Individual source syncs are still available via API, but the UI runs them together.
+                                            </p>
+                                        )}
+                                    </div>
+
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 dark:border-slate-800 dark:bg-slate-900/50">
                                         <h3 className="mb-4 text-base font-semibold text-slate-900 dark:text-slate-100">
                                             Integration Toggles
@@ -853,10 +1003,58 @@ export const SettingsModal = ({
 
                                 {/* Tab: Vector Search */}
                                 <div className={clsx('space-y-6', activeTab !== 'vector' && 'hidden')}>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-700 dark:bg-slate-800/60">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div className="text-slate-600 dark:text-slate-300">
+                                                <p className="font-semibold">Durable vector generations</p>
+                                                <p className="mt-1">
+                                                    {vectorStatus
+                                                        ? `${vectorStatus.queue.durable.toLocaleString()} queued · ${vectorStatus.queue.dead} dead · query ${vectorStatus.runtime.ready ? 'ready' : 'not ready'}`
+                                                        : 'Loading vector status…'}
+                                                </p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={reconcileVectors}
+                                                className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-500"
+                                            >
+                                                <RefreshCw className="h-4 w-4" /> Reconcile shadow index
+                                            </button>
+                                        </div>
+                                        {vectorStatus?.runtime.embeddingCircuit.open && (
+                                            <p className="mt-2 text-rose-600 dark:text-rose-300">Embedding circuit open: {vectorStatus.runtime.embeddingCircuit.lastError}</p>
+                                        )}
+                                        <div className="mt-3 space-y-1">
+                                            {vectorStatus?.generations.slice(0, 4).map(generation => (
+                                                <p key={generation.id} className="text-slate-500 dark:text-slate-400">
+                                                    #{generation.id} {generation.active ? 'active' : generation.status} · {generation.dimensions}d · {generation.completed_items.toLocaleString()}/{generation.total_items.toLocaleString()} · {generation.dead_items} dead
+                                                </p>
+                                            ))}
+                                        </div>
+                                        {vectorAction && (
+                                            <p className={clsx('mt-2', vectorAction.type === 'error' ? 'text-rose-600 dark:text-rose-300' : 'text-emerald-600 dark:text-emerald-300')}>
+                                                {vectorAction.message}
+                                            </p>
+                                        )}
+                                    </div>
                                     <div className="space-y-3">
                                         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                            Meilisearch + Ollama
+                                            Meilisearch + Embeddings
                                         </h3>
+                                        <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                            <input
+                                                type="checkbox"
+                                                name="vector_enableChunks"
+                                                defaultChecked={config?.vectorSearch?.enableChunks ?? defaultVectorSearchState.enableChunks}
+                                                className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-900"
+                                            />
+                                            <span className="space-y-1">
+                                                <span className="block font-medium">Enable chunk vectors</span>
+                                                <span className="block text-xs text-slate-500 dark:text-slate-400">
+                                                    Keep this on if you want semantic snippets and chunk-level reranking. Turn it off to use only the whole-card vector index and skip building <code>card_chunks</code>.
+                                                </span>
+                                            </span>
+                                        </label>
                                         <div className="grid gap-4 md:grid-cols-2">
                                             <label className="flex flex-col gap-2 text-sm">
                                                 <span className="font-medium text-slate-700 dark:text-slate-300">Cards index UID</span>
@@ -895,12 +1093,33 @@ export const SettingsModal = ({
                                                 />
                                             </label>
                                             <label className="flex flex-col gap-2 text-sm md:col-span-2">
-                                                <span className="font-medium text-slate-700 dark:text-slate-300">Ollama URL</span>
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">Embedding provider</span>
+                                                <select
+                                                    name="vector_embeddingProvider"
+                                                    defaultValue={config?.vectorSearch?.embeddingProvider ?? defaultVectorSearchState.embeddingProvider}
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                                >
+                                                    <option value="ollama">Ollama</option>
+                                                    <option value="openai">OpenAI-compatible</option>
+                                                </select>
+                                            </label>
+                                            <label className="flex flex-col gap-2 text-sm md:col-span-2">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">Embedding URL</span>
                                                 <input
                                                     type="text"
-                                                    name="vector_ollamaUrl"
-                                                    defaultValue={config?.vectorSearch?.ollamaUrl ?? defaultVectorSearchState.ollamaUrl}
-                                                    placeholder="http://127.0.0.1:11434"
+                                                    name="vector_embeddingUrl"
+                                                    defaultValue={config?.vectorSearch?.embeddingUrl || config?.vectorSearch?.ollamaUrl || defaultVectorSearchState.ollamaUrl}
+                                                    placeholder="http://127.0.0.1:11434 or https://inference.example.com"
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                                />
+                                            </label>
+                                            <label className="flex flex-col gap-2 text-sm md:col-span-2">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">Embedding API key</span>
+                                                <input
+                                                    type="password"
+                                                    name="vector_embeddingApiKey"
+                                                    defaultValue={config?.vectorSearch?.embeddingApiKey ?? defaultVectorSearchState.embeddingApiKey}
+                                                    autoComplete="off"
                                                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                                                 />
                                             </label>
@@ -977,13 +1196,13 @@ export const SettingsModal = ({
                                             </summary>
                                             <div className="mt-3 space-y-2 leading-relaxed">
                                                 <p>
-                                                    <strong>Enable</strong> only after both Meili indexes (<code>cards_vsem</code> + <code>card_chunks</code>) are populated. The cards index stores one embedding per narrative section, while the chunk index stores every over-length section or alternate greeting.
+                                                    <strong>Vector search</strong> needs the cards index populated. Chunk vectors are optional: keep <code>Enable chunk vectors</code> on only if you also want the <code>card_chunks</code> index and semantic snippets.
                                                 </p>
                                                 <p>
-                                                    <strong>Ollama URL &amp; Embed model</strong> must match whatever powered the backfill. Changing the model requires regenerating embeddings or results will be meaningless.
+                                                    <strong>Embedding URL &amp; model</strong> must match whatever powered the backfill. Changing the model requires regenerating embeddings or results will be meaningless.
                                                 </p>
                                                 <p>
-                                                    <strong>Cards / chunk indexes</strong> tell the API which Meili UID to query. Keep them in sync with whatever UID you swap into production (e.g. <code>cards_vsem</code> while it is staged, <code>cards</code> once you swap).
+                                                    <strong>Cards / chunk indexes</strong> tell the API which Meili UID to query. When chunk vectors are disabled, the chunk UID is ignored and can stay reserved for later.
                                                 </p>
                                                 <p>
                                                     <strong>Semantic ratio</strong> biases Meili between lexical and vector scoring. Values around 0.3‑0.5 keep keyword intent intact; go lower for proper nouns, higher for vibes.
@@ -992,7 +1211,7 @@ export const SettingsModal = ({
                                                     <strong>Cards multiplier</strong> controls how many lexical hits we fetch before fusing with chunk hits. If exact matches disappear, bump this toward 3‑4 so the baseline list stays deep enough.
                                                 </p>
                                                 <p>
-                                                    <strong>Chunk limit / weight</strong> governs how many chunk-only hits are allowed to outrank lexical ones. Lower the weight if semantic snippets drown out obvious keyword matches; raise it when you want long-form alternates to drive the ranking.
+                                                    <strong>Chunk limit / weight</strong> only apply when chunk vectors are enabled. Lower the weight if semantic snippets drown out obvious keyword matches; raise it when you want long-form alternates to drive the ranking.
                                                 </p>
                                                 <p>
                                                     <strong>RRF k</strong> is the denominator inside reciprocal-rank fusion. Higher values flatten the advantage of top-ranked items; leave it at 60 unless you have a reason to rebalance the curve.

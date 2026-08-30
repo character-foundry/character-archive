@@ -12,13 +12,13 @@ import axios from 'axios';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { BaseScraper } from './BaseScraper.js';
-import { detectLanguage } from '../../database.js';
+import { detectLanguage, getDatabase } from '../../database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SEARCH_URL = 'https://character-tavern.com/api/search/cards';
-const CARDS_BASE_URL = 'https://cards.character-tavern.com';
+const CARDS_BASE_URL = 'https://ct-cards.storage.character-tavern.com';
 const CT_SITE_URL = 'https://character-tavern.com';
 
 const DEFAULT_HEADERS = {
@@ -29,11 +29,12 @@ const DEFAULT_HEADERS = {
 };
 
 export class CtScraper extends BaseScraper {
-    constructor() {
+    constructor({ httpClient = axios } = {}) {
         super({
             source: 'ct',
             displayName: 'Character Tavern'
         });
+        this.http = httpClient;
 
         // CT uses database blacklist file in data/
         this.blacklistFile = path.join(__dirname, '../../../data/ct-blacklist.txt');
@@ -92,6 +93,12 @@ export class CtScraper extends BaseScraper {
     sanitizeTags(tags) {
         if (!Array.isArray(tags)) return [];
         return Array.from(new Set(tags.map(tag => (tag || '').toString().trim()).filter(Boolean)));
+    }
+
+    normalizeSourcePath(value = '') {
+        const [author = '', ...slugParts] = String(value || '').trim().replace(/^\/+|\/+$/g, '').split('/');
+        const normalizePart = part => part.trim().toLowerCase().replace(/\s+/g, '_');
+        return [normalizePart(author), normalizePart(slugParts.join('/'))].filter(Boolean).join('/');
     }
 
     matchesBannedTags(hit, bannedLower) {
@@ -162,7 +169,7 @@ export class CtScraper extends BaseScraper {
         }
 
         try {
-            const response = await axios.get(url, {
+            const response = await this.http.get(url, {
                 headers,
                 timeout: 30000
             });
@@ -185,9 +192,53 @@ export class CtScraper extends BaseScraper {
     /**
      * CT doesn't need separate card fetch - data comes from list
      */
+    async fetchCardBundle(item, config = {}) {
+        const sourcePath = this.normalizeSourcePath(item?.path);
+        if (!sourcePath || !sourcePath.includes('/')) {
+            throw new Error(`Character Tavern card ${item?.id || 'unknown'} has no valid author/slug path`);
+        }
+        const headers = { ...DEFAULT_HEADERS };
+        const cookies = config.cookies || this._currentCookies || [];
+        if (cookies.length) headers.Cookie = cookies.join('; ');
+
+        const detailResponse = await this.http.get(`${CT_SITE_URL}/api/character/${sourcePath}`, {
+            headers,
+            timeout: 30000
+        });
+        const card = detailResponse.data?.card;
+        if (!card?.id) throw new Error(`Character Tavern detail response for ${sourcePath} contained no card`);
+
+        const metadataUrl = suffix => `${CT_SITE_URL}/api/character/${encodeURIComponent(card.id)}/${suffix}`;
+        const [tagsResponse, greetingsResponse, warningsResponse, lorebookResponse] = await Promise.all([
+            this.http.get(metadataUrl('tags'), { headers, timeout: 30000 }),
+            this.http.get(metadataUrl('alternative-greetings'), { headers, timeout: 30000 }),
+            this.http.get(metadataUrl('content-warnings'), { headers, timeout: 30000 }),
+            card.lorebookId
+                ? this.http.get(metadataUrl('lorebook'), { headers, timeout: 30000 })
+                : Promise.resolve({ data: null })
+        ]);
+
+        if (!Array.isArray(tagsResponse.data)) throw new Error(`Character Tavern tags for ${card.id} were malformed`);
+        if (!Array.isArray(greetingsResponse.data)) throw new Error(`Character Tavern greetings for ${card.id} were malformed`);
+        if (!Array.isArray(warningsResponse.data?.contentWarnings)) {
+            throw new Error(`Character Tavern warnings for ${card.id} were malformed`);
+        }
+        if (card.lorebookId && !lorebookResponse.data?.id) {
+            throw new Error(`Character Tavern lorebook ${card.lorebookId} for ${card.id} was missing`);
+        }
+
+        return {
+            listItem: item,
+            card: { ...card, path: sourcePath },
+            tags: this.sanitizeTags(tagsResponse.data),
+            alternateGreetings: greetingsResponse.data.filter(value => typeof value === 'string' && value.trim()),
+            contentWarnings: warningsResponse.data.contentWarnings,
+            lorebook: lorebookResponse.data || null
+        };
+    }
+
     async fetchCard(_sourceId) {
-        // Not used for CT - all data comes from list
-        return { data: null, error: 'Not implemented' };
+        return { data: null, error: 'Character Tavern cards are fetched by author/slug path' };
     }
 
     /**
@@ -196,7 +247,8 @@ export class CtScraper extends BaseScraper {
     async fetchImage(cardPath) {
         if (!cardPath) return null;
 
-        const url = `${CARDS_BASE_URL}/${cardPath}.png?action=download`;
+        const normalizedPath = this.normalizeSourcePath(cardPath);
+        const url = `${CARDS_BASE_URL}/${normalizedPath}.png`;
         const headers = {
             accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
             referer: `${CT_SITE_URL}/`,
@@ -209,74 +261,119 @@ export class CtScraper extends BaseScraper {
         }
 
         try {
-            const response = await axios.get(url, {
+            const response = await this.http.get(url, {
                 responseType: 'arraybuffer',
                 headers,
                 timeout: 30000
             });
-            return Buffer.from(response.data);
+            const buffer = Buffer.from(response.data);
+            const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+            if (buffer.length < signature.length || !buffer.subarray(0, signature.length).equals(signature)) {
+                throw new Error(`Character Tavern image for ${normalizedPath} is not a valid PNG`);
+            }
+            return buffer;
         } catch (error) {
-            this.log.warn(`Failed to download image for ${cardPath}`, error.message);
-            return null;
+            throw new Error(`Failed to download Character Tavern image for ${normalizedPath}: ${error.message}`, { cause: error });
         }
     }
 
-    deriveFeatureFlags(hit) {
+    deriveFeatureFlags(bundle) {
+        const hit = bundle?.card || bundle || {};
         return {
-            hasAlternateGreetings: Array.isArray(hit.alternativeFirstMessage) &&
-                hit.alternativeFirstMessage.some(msg => typeof msg === 'string' && msg.trim().length > 0),
-            hasExampleDialogues: !!(hit.characterExampleMessages &&
-                (typeof hit.characterExampleMessages === 'string'
-                    ? hit.characterExampleMessages.trim().length > 0
-                    : Array.isArray(hit.characterExampleMessages) && hit.characterExampleMessages.length > 0)),
-            hasSystemPrompt: !!(hit.characterPostHistoryPrompt && hit.characterPostHistoryPrompt.trim().length > 0),
-            hasLorebook: false,
-            hasEmbeddedLorebook: false,
-            hasLinkedLorebook: false,
+            hasAlternateGreetings: Array.isArray(bundle?.alternateGreetings) && bundle.alternateGreetings.length > 0,
+            hasExampleDialogues: Boolean(hit.definition_example_messages?.trim()),
+            hasSystemPrompt: Boolean(hit.definition_system_prompt?.trim() || hit.definition_post_history_prompt?.trim()),
+            hasLorebook: Boolean(bundle?.lorebook?.entries?.length),
+            hasEmbeddedLorebook: Boolean(bundle?.lorebook?.entries?.length),
+            hasLinkedLorebook: Boolean(hit.lorebookId),
             hasGallery: false,
             hasEmbeddedImages: false,
             hasExpressions: false
         };
     }
 
-    async parseCardToMetadata(hit, dbId) {
-        const description = this.formatDescription(hit);
-        const tags = this.sanitizeTags(hit.tags || []);
-        const language = detectLanguage(description || hit.tagline || hit.characterFirstMessage || '');
-        const flags = this.deriveFeatureFlags(hit);
+    async parseCardToMetadata(bundle, dbId) {
+        const hit = bundle?.card || bundle;
+        const description = hit.definition_character_description || hit.description || '';
+        const tags = this.sanitizeTags(bundle?.tags || []);
+        const language = detectLanguage(description || hit.tagline || hit.definition_first_message || '');
+        const flags = this.deriveFeatureFlags(bundle);
 
         const createdAtRaw = hit.createdAt || hit.created_at;
-        const lastUpdateAtRaw = hit.lastUpdateAt || hit.updatedAt || hit.updated_at;
+        const lastUpdateAtRaw = hit.lastUpdatedAt || hit.lastUpdateAt || hit.updatedAt || hit.updated_at;
         const createdAtSql = this.toSqlTimestamp(createdAtRaw);
         const lastUpdateSql = this.toSqlTimestamp(
             (lastUpdateAtRaw === 0 || lastUpdateAtRaw === '0') ? createdAtRaw : (lastUpdateAtRaw || createdAtRaw)
         );
 
-        const ctPath = (hit.path || '').trim().replace(/^\/+/, '');
+        const ctPath = this.normalizeSourcePath(hit.path);
         const sourceUrl = `${CT_SITE_URL}/character/${ctPath || hit.id}`;
+        const lorebookEntries = Array.isArray(bundle?.lorebook?.entries)
+            ? bundle.lorebook.entries.map(entry => ({
+                name: entry.name || '',
+                content: entry.content || '',
+                enabled: entry.enabled !== false,
+                insertion_order: Number(entry.insertionOrder || 0),
+                constant: Boolean(entry.constant),
+                keys: Array.isArray(entry.keys) ? entry.keys : []
+            }))
+            : [];
+        const definitionData = {
+            name: hit.inChatName || hit.name || 'Untitled',
+            description,
+            personality: hit.definition_personality || '',
+            scenario: hit.definition_scenario || '',
+            first_mes: hit.definition_first_message || '',
+            mes_example: hit.definition_example_messages || '',
+            alternate_greetings: bundle?.alternateGreetings || [],
+            system_prompt: hit.definition_system_prompt || '',
+            post_history_instructions: hit.definition_post_history_prompt || '',
+            tags,
+            creator: ctPath.split('/')[0] || '',
+            creator_notes: hit.description || '',
+            character_version: String(hit.versionId ?? ''),
+            extensions: {
+                character_tavern: {
+                    id: hit.id,
+                    versionId: hit.versionId ?? null,
+                    contentWarnings: bundle?.contentWarnings || [],
+                    lorebookId: hit.lorebookId ?? null
+                }
+            }
+        };
+        if (lorebookEntries.length) {
+            definitionData.character_book = {
+                name: bundle.lorebook.name || '',
+                description: bundle.lorebook.description || '',
+                scan_depth: bundle.lorebook.scanDepth ?? null,
+                entries: lorebookEntries
+            };
+        }
+        const definition = { spec: 'chara_card_v2', spec_version: '2.0', data: definitionData };
 
         return {
             id: dbId,
-            author: hit.author || '',
+            author: ctPath.split('/')[0] || String(hit.author || ''),
             name: hit.name || hit.inChatName || 'Untitled',
             tagline: hit.tagline || '',
             description,
             topics: tags,
-            tokenCount: hit.totalTokens || 0,
-            tokenDescriptionCount: null,
-            tokenPersonalityCount: null,
-            tokenScenarioCount: null,
-            tokenMesExampleCount: null,
-            tokenFirstMessageCount: null,
-            tokenSystemPromptCount: null,
-            tokenPostHistoryCount: null,
+            nTokens: hit.tokenTotal || hit.totalTokens || 0,
+            tokenCount: hit.tokenTotal || hit.totalTokens || 0,
+            tokenDescriptionCount: hit.tokenDescription ?? null,
+            tokenPersonalityCount: hit.tokenPersonality ?? null,
+            tokenScenarioCount: hit.tokenScenario ?? null,
+            tokenMesExampleCount: hit.tokenMesExample ?? null,
+            tokenFirstMessageCount: hit.tokenFirstMes ?? null,
+            tokenSystemPromptCount: hit.tokenSystemPrompt ?? null,
+            tokenPostHistoryCount: hit.tokenPostHistoryInstructions ?? null,
             lastModified: lastUpdateSql,
             lastActivityAt: lastUpdateSql,
             createdAt: createdAtSql,
-            nChats: hit.views || 0,
-            nMessages: hit.messages || 0,
-            n_favorites: hit.likes || 0,
-            starCount: hit.downloads || 0,
+            nChats: 0,
+            nMessages: hit.analytics_messages || bundle?.listItem?.messages || 0,
+            n_favorites: bundle?.listItem?.likes || 0,
+            starCount: hit.analytics_downloads || bundle?.listItem?.downloads || 0,
             ratingsEnabled: 0,
             rating: 0,
             ratingCount: 0,
@@ -287,13 +384,18 @@ export class CtScraper extends BaseScraper {
             ...flags,
             source: 'ct',
             sourceId: hit.id,
-            sourcePath: hit.path || '',
+            sourcePath: ctPath,
             sourceUrl,
-            // CT-specific metadata for JSON sidecar
-            alternate_greetings: Array.isArray(hit.alternativeFirstMessage) ? hit.alternativeFirstMessage : [],
-            mes_example: this.collapseExamples(hit.characterExampleMessages),
-            system_prompt: hit.characterPostHistoryPrompt || '',
-            rawHit: hit
+            sourceVersionId: hit.versionId ?? null,
+            contentWarnings: bundle?.contentWarnings || [],
+            alternate_greetings: bundle?.alternateGreetings || [],
+            mes_example: hit.definition_example_messages || '',
+            system_prompt: hit.definition_system_prompt || '',
+            post_history_instructions: hit.definition_post_history_prompt || '',
+            character_book: definitionData.character_book || null,
+            definition,
+            rawHit: bundle?.listItem || null,
+            remoteCard: hit
         };
     }
 
@@ -303,53 +405,52 @@ export class CtScraper extends BaseScraper {
     async processCard(item, config = {}) {
         const sourceId = this.getSourceId(item);
 
-        // Check banned tags
-        if (this._bannedTagsLower && this.matchesBannedTags(item, this._bannedTagsLower)) {
-            return { success: false, reason: 'banned_tags' };
-        }
-
-        // Check min tokens
-        if (item.totalTokens && item.totalTokens < (config.minTokens || 300)) {
-            return { success: false, reason: 'below_min_tokens' };
-        }
-
         // Check blacklist
         if (this.isBlacklisted(sourceId)) {
             return { success: false, reason: 'blacklisted' };
         }
 
-        // Check existing
-        const existing = this.checkExisting(sourceId);
-        if (existing) {
-            return { success: false, reason: 'already_exists', dbId: existing.id };
-        }
-
-        const dbId = this.getNextDbId();
-
         try {
-            // Parse metadata
-            const metadata = await this.parseCardToMetadata(item, dbId);
+            const bundle = await this.fetchCardBundle(item, config);
+            if (this._bannedTagsLower && this.matchesBannedTags({ tags: bundle.tags }, this._bannedTagsLower)) {
+                return { success: false, reason: 'banned_tags' };
+            }
+            const excludedWarnings = new Set((config.excludedWarnings || []).map(value => String(value).toLowerCase()));
+            if (bundle.contentWarnings.some(value => excludedWarnings.has(String(value).toLowerCase()))) {
+                return { success: false, reason: 'excluded_warning' };
+            }
+            const totalTokens = Number(bundle.card.tokenTotal || bundle.card.totalTokens || 0);
+            if (totalTokens < (config.minTokens || 0)) return { success: false, reason: 'below_min_tokens' };
+            if (config.maxTokens && totalTokens > config.maxTokens) return { success: false, reason: 'above_max_tokens' };
 
-            // Fetch image
-            const imageBuffer = await this.fetchImage(item.path);
-            if (!imageBuffer) {
-                this.log.warn(`No image for CT card ${sourceId}`);
+            const sourcePath = this.normalizeSourcePath(bundle.card.path);
+            const existing = getDatabase().prepare(`
+                SELECT id, lastModified, sourceId, sourcePath
+                FROM cards
+                WHERE source = 'ct' AND (sourceId = ? OR LOWER(sourcePath) = ?)
+                ORDER BY id ASC
+                LIMIT 1
+            `).get(String(bundle.card.id), sourcePath);
+            const remoteTimestamp = new Date(bundle.card.lastUpdatedAt || bundle.card.createdAt || 0).getTime();
+            const localTimestamp = existing?.lastModified ? new Date(existing.lastModified).getTime() : 0;
+            if (existing && !config.force && remoteTimestamp > 0 && remoteTimestamp <= localTimestamp) {
+                return { success: false, reason: 'unchanged', dbId: existing.id };
             }
 
-            // Write files
-            const filesToWrite = { json: metadata };
-            if (imageBuffer) {
-                filesToWrite.png = imageBuffer;
-            }
+            const dbId = existing?.id || this.getNextDbId();
+            const metadata = await this.parseCardToMetadata(bundle, dbId);
 
-            await this.writeCardFiles(dbId, filesToWrite);
+            // CT images are required. fetchImage validates the signature and throws on failure.
+            const imageBuffer = await this.fetchImage(sourcePath);
+
+            await this.writeCardFiles(dbId, { json: metadata, png: imageBuffer });
             this.upsertCard(metadata);
 
-            this.log.info(`Imported CT card: ${metadata.name} (${sourceId} -> ${dbId})`);
+            this.log.info(`${existing ? 'Updated' : 'Imported'} CT card: ${metadata.name} (${sourceId} -> ${dbId})`);
 
             return {
                 success: true,
-                isNew: true,
+                isNew: !existing,
                 dbId,
                 name: metadata.name
             };
@@ -378,19 +479,25 @@ export class CtScraper extends BaseScraper {
             cookies,
             hitsPerPage: Math.min(config.hitsPerPage || 30, 50),
             minTokens: config.minTokens || 300,
+            maxTokens: config.maxTokens || 900000,
             bannedTags: config.bannedTags || [],
+            excludedWarnings: config.excludedWarnings || [],
             sort: config.sort || 'newest',
-            query: config.query || ''
+            query: config.query || '',
+            force: Boolean(config.force || config.forceUpdate),
+            fullReconcile: Boolean(config.fullReconcile)
         };
 
         this.log.info(`Starting CT sync (${pageLimit} pages)...`);
         this.loadBlacklist();
 
         let added = 0;
+        let updated = 0;
         let skipped = 0;
+        let errors = 0;
         let processed = 0;
 
-        for (let page = 1; page <= pageLimit; page++) {
+        for (let page = 1; config.fullReconcile || page <= pageLimit; page++) {
             let hits;
             try {
                 hits = await this.fetchList(page, scraperConfig);
@@ -409,7 +516,8 @@ export class CtScraper extends BaseScraper {
                 const result = await this.processCard(hit, scraperConfig);
 
                 if (result.success) {
-                    added++;
+                    if (result.isNew) added++;
+                    else updated++;
                     this.reportProgress(progressCallback, {
                         progress: Math.round((page / pageLimit) * 100),
                         currentCard: `[CT] ${result.name}`,
@@ -421,6 +529,7 @@ export class CtScraper extends BaseScraper {
                     });
                 } else {
                     skipped++;
+                    if (result.reason === 'error' || result.reason === 'fetch_failed') errors++;
                 }
             }
 
@@ -430,9 +539,9 @@ export class CtScraper extends BaseScraper {
             }
         }
 
-        this.log.info(`CT sync complete: ${added} added, ${skipped} skipped, ${processed} processed`);
+        this.log.info(`CT sync complete: ${added} added, ${updated} updated, ${skipped} skipped, ${errors} errors, ${processed} processed`);
 
-        return { success: true, newCards: added, updatedCards: 0, added, skipped, processed };
+        return { success: errors === 0 || added + updated > 0, newCards: added, updatedCards: updated, added, updated, skipped, errors, processed };
     }
 }
 

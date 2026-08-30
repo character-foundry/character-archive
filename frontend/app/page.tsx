@@ -96,7 +96,7 @@ function HomeContent() {
     ctSyncing, ctSyncStatus, startCtSync: startCtSyncing,
     wyvernSyncing, wyvernSyncStatus, startWyvernSync,
     risuSyncing, risuSyncStatus, startRisuSync,
-    anySyncing, cancelAllSyncs,
+    anySyncing, latestSyncRun, cancelAllSyncs,
   } = sync;
 
   // Computed values
@@ -393,8 +393,7 @@ function HomeContent() {
         totalPages={totalPages}
         pageLabel={pageLabel}
         isLoading={isLoading}
-        syncing={syncing}
-        ctSyncing={ctSyncing}
+        syncing={anySyncing}
         darkMode={darkMode}
         onGoToFirstPage={handleGoToFirstPage}
         onNavigateBack={handleNavigateBack}
@@ -404,7 +403,6 @@ function HomeContent() {
         onSaveSearch={() => handleSaveSearch(filters, includeTagsSelected, excludeTagsSelected)}
         onSync={async () => {
           await startSyncing();
-          if (config?.ctSync?.enabled) await startCtSyncing();
         }}
         onOpenFederation={() => setShowFederation(true)}
         onOpenSettings={() => setShowSettings(true)}
@@ -551,6 +549,7 @@ function HomeContent() {
         risuSyncStatus={risuSyncStatus}
         defaultWyvernSyncState={defaultWyvernSyncState}
         anySyncing={anySyncing}
+        latestSyncRun={latestSyncRun}
         cancelAllSyncs={cancelAllSyncs}
       />
       <FederationModal
