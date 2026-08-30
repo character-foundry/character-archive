@@ -166,7 +166,7 @@ export const SettingsModal = ({
             const response = await fetch('/api/vector/reconcile', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: '{}'
+                body: JSON.stringify({ forceNewGeneration: true })
             });
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || 'Vector reconcile failed');

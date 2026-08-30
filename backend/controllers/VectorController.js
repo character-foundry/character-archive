@@ -15,7 +15,8 @@ function configuredSpec(overrides = {}) {
         dimensions: Number(overrides.dimensions || vector.embedDimensions),
         cardsIndexBase: overrides.cardsIndexBase || vector.cardsIndex || 'cards_vsem',
         chunksIndexBase: overrides.chunksIndexBase ?? vector.chunksIndex ?? 'card_chunks',
-        chunksEnabled: overrides.chunksEnabled ?? vector.enableChunks !== false
+        chunksEnabled: overrides.chunksEnabled ?? vector.enableChunks !== false,
+        forceNewGeneration: overrides.forceNewGeneration === true
     };
 }
 

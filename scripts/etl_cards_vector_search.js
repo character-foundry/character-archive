@@ -12,6 +12,7 @@ import {
     checkEmbeddingService,
     requestEmbeddings as requestEmbeddingVectors
 } from '../backend/services/EmbeddingClient.js';
+import { resolveExplicitIdMode, VECTOR_RESULT_PREFIX } from './vector-etl-contract.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -90,6 +91,8 @@ const stats = {
     total: 0,
     processed: 0,
     skipped: 0,
+    skippedNoText: 0,
+    skippedUnchanged: 0,
     cardUpdates: 0,
     chunkUpdates: 0,
     chunkDeletes: 0
@@ -584,6 +587,7 @@ async function handleCard(row, db) {
     const altGreetings = collectAlternateGreetings(specData, metadata);
     if (!baseSections.length && altGreetings.length === 0) {
         stats.skipped += 1;
+        stats.skippedNoText += 1;
         console.warn(`[WARN] No usable text sections for card ${cardId}, skipping`);
         return;
     }
@@ -764,6 +768,7 @@ async function handleCard(row, db) {
 
     if (!cardNeedsUpdate && !shouldProcessChunks) {
         stats.skipped += 1;
+        stats.skippedUnchanged += 1;
         return;
     }
 
@@ -1072,13 +1077,18 @@ async function main() {
             db.prepare(`DELETE FROM vector_index_queue WHERE id IN (${deletePlaceholders})`).run(...queueRowIds);
         }
         console.log('[INFO] Vector ETL (filtered deletes) complete:', stats);
+        console.log(`${VECTOR_RESULT_PREFIX}${JSON.stringify(stats)}`);
         process.exit(0);
     }
 
     if (explicitIds.length) {
-        forceReembedAll = false;
-        forceChunkReembed = false;
-        verifyCardDocs = false;
+        const explicitMode = resolveExplicitIdMode({
+            forceReembed: FORCE_REEMBED,
+            chunksEnabled: ENABLE_CHUNK_INDEX
+        });
+        forceReembedAll = explicitMode.forceReembedAll;
+        forceChunkReembed = explicitMode.forceChunkReembed;
+        verifyCardDocs = explicitMode.verifyCardDocs;
         stats.total = explicitIds.length;
         await processCardIds(explicitIds, db);
         if (queueRowIds.length) {
@@ -1086,6 +1096,7 @@ async function main() {
             db.prepare(`DELETE FROM vector_index_queue WHERE id IN (${deletePlaceholders})`).run(...queueRowIds);
         }
         console.log('[INFO] Vector ETL (filtered) complete:', stats);
+        console.log(`${VECTOR_RESULT_PREFIX}${JSON.stringify(stats)}`);
         process.exit(0);
     }
 

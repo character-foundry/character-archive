@@ -40,14 +40,40 @@ function hydrate(database, row) {
 export function createVectorGenerationRepository(database) {
     const reconcileTransaction = database.transaction(spec => {
         const wantsChunks = spec.chunksIndexBase !== '' && spec.chunksEnabled !== false;
+        const reusableStatuses = spec.forceNewGeneration
+            ? ['building', 'ready']
+            : ['building', 'ready', 'active'];
+        const statusPlaceholders = reusableStatuses.map(() => '?').join(',');
         const existing = database.prepare(`
             SELECT * FROM vector_generations
             WHERE model_name = ? AND embedder_name = ? AND dimensions = ?
-              AND status IN ('building','ready','active')
+              AND status IN (${statusPlaceholders})
+            ORDER BY id DESC
+        `).all(spec.modelName, spec.embedderName, spec.dimensions, ...reusableStatuses)
+            .find(row => Boolean(row.chunks_index) === wantsChunks);
+        if (existing) return existing.id;
+
+        const failed = database.prepare(`
+            SELECT * FROM vector_generations
+            WHERE model_name = ? AND embedder_name = ? AND dimensions = ? AND status = 'failed'
             ORDER BY id DESC
         `).all(spec.modelName, spec.embedderName, spec.dimensions)
             .find(row => Boolean(row.chunks_index) === wantsChunks);
-        if (existing) return existing.id;
+        if (failed) {
+            database.prepare(`
+                UPDATE vector_work_items
+                SET status = 'retry', attempts = 0, next_attempt_at = CURRENT_TIMESTAMP,
+                    lease_owner = NULL, lease_expires_at = NULL, last_error = NULL,
+                    completed_at = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE generation_id = ? AND status = 'dead'
+            `).run(failed.id);
+            database.prepare(`
+                UPDATE vector_generations
+                SET status = 'building', failed_items = 0, last_error = NULL, completed_at = NULL
+                WHERE id = ?
+            `).run(failed.id);
+            return failed.id;
+        }
 
         const fingerprint = crypto.createHash('sha256')
             .update(`${spec.modelName}\0${spec.embedderName}\0${spec.dimensions}`)

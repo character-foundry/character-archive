@@ -136,14 +136,41 @@ test('activation rolls back the database pointer when config persistence fails',
     }
 });
 
-test('a failed generation can be rebuilt with the same model specification', () => {
+test('a failed generation resumes only its dead work with the same model specification', () => {
     const { db, vectors } = harness();
     try {
         const failed = vectors.reconcile({ modelName: 'model', embedderName: 'embedder', dimensions: 8, cardsIndexBase: 'cards', chunksIndexBase: 'chunks' });
-        db.prepare("UPDATE vector_generations SET status = 'failed' WHERE id = ?").run(failed.id);
+        const completed = vectors.claimBatch({ generationId: failed.id, workerId: 'worker-a', limit: 2 });
+        vectors.completeItems(completed.map(item => item.id));
+        const dead = vectors.claimBatch({ generationId: failed.id, workerId: 'worker-a', limit: 1 });
+        vectors.failItems(dead.map(item => item.id), new Error('bad endpoint'), { maxAttempts: 1 });
+        assert.equal(vectors.get(failed.id).status, 'failed');
+
         const retry = vectors.reconcile({ modelName: 'model', embedderName: 'embedder', dimensions: 8, cardsIndexBase: 'cards', chunksIndexBase: 'chunks' });
-        assert.notEqual(retry.id, failed.id);
-        assert.notEqual(retry.name, failed.name);
+        assert.equal(retry.id, failed.id);
+        assert.equal(retry.status, 'building');
+        assert.equal(retry.completed_items, 2);
+        assert.equal(retry.retry_items, 1);
+        assert.equal(retry.dead_items, 0);
+    } finally {
+        db.close();
+    }
+});
+
+test('forced reconcile creates a repair shadow when only the matching active generation exists', () => {
+    const { db, vectors } = harness();
+    try {
+        const active = vectors.reconcile({ modelName: 'model', embedderName: 'embedder', dimensions: 8, cardsIndexBase: 'cards', chunksIndexBase: 'chunks' });
+        db.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(active.id);
+        vectors.activate(active.id, { qualityApproved: true });
+
+        const shadow = vectors.reconcile({
+            modelName: 'model', embedderName: 'embedder', dimensions: 8,
+            cardsIndexBase: 'cards', chunksIndexBase: 'chunks', forceNewGeneration: true
+        });
+        assert.notEqual(shadow.id, active.id);
+        assert.equal(shadow.status, 'building');
+        assert.equal(shadow.active, false);
     } finally {
         db.close();
     }

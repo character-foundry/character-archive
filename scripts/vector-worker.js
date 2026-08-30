@@ -8,6 +8,7 @@ import { initDatabase, getDatabase } from '../backend/database.js';
 import { getVectorGenerationRepository } from '../backend/db/repositories/VectorGenerationRepository.js';
 import { loadConfig } from '../config-loader.js';
 import { logger } from '../backend/utils/logger.js';
+import { parseVectorEtlResult, validateVectorEtlResult } from './vector-etl-contract.js';
 
 const log = logger.scoped('VECTOR:WORKER');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -73,11 +74,33 @@ function runEtl(items, generation, config) {
         EMBEDDING_TOKEN_BUDGET: '8000'
     };
     return new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [etlPath], { cwd: path.join(__dirname, '..'), env, stdio: 'inherit' });
+        const child = spawn(process.execPath, [etlPath], {
+            cwd: path.join(__dirname, '..'),
+            env,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        let stdout = '';
+        child.stdout.on('data', chunk => {
+            process.stdout.write(chunk);
+            stdout = `${stdout}${chunk}`.slice(-1_000_000);
+        });
+        child.stderr.on('data', chunk => process.stderr.write(chunk));
         child.once('error', reject);
         child.once('exit', (code, signal) => {
-            if (code === 0) resolve();
-            else reject(new Error(`Vector ETL exited ${code}${signal ? ` (${signal})` : ''}`));
+            if (code !== 0) {
+                reject(new Error(`Vector ETL exited ${code}${signal ? ` (${signal})` : ''}`));
+                return;
+            }
+            try {
+                const result = parseVectorEtlResult(stdout);
+                resolve(validateVectorEtlResult(result, {
+                    upsertCount: upserts.length,
+                    deleteCount: deletes.length,
+                    forceReembed: true
+                }));
+            } catch (error) {
+                reject(error);
+            }
         });
     });
 }
