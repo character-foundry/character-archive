@@ -51,8 +51,28 @@ test('Character Tavern detail bundle uses path detail and ID metadata endpoints'
 
 test('Character Tavern image is required to have a PNG signature', async () => {
     const scraper = new CtScraper({
-        httpClient: { async get() { return { data: Buffer.from([0xff, 0xd8, 0xff, 0x00]) }; } }
+        httpClient: { async get() { return { data: Buffer.from([0xff, 0xd8, 0xff, 0x00]) }; } },
+        imageRetryDelays: []
     });
 
     await assert.rejects(() => scraper.fetchImage('alice/test_card'), /not a valid PNG/);
+});
+
+test('Character Tavern image retries a transient CDN placeholder', async () => {
+    let attempts = 0;
+    const delays = [];
+    const scraper = new CtScraper({
+        httpClient: {
+            async get() {
+                attempts += 1;
+                return { data: attempts === 1 ? Buffer.from('<html>not ready</html>') : PNG };
+            }
+        },
+        imageRetryDelays: [25],
+        sleep: async delay => delays.push(delay)
+    });
+
+    assert.deepEqual(await scraper.fetchImage('alice/test_card'), PNG);
+    assert.equal(attempts, 2);
+    assert.deepEqual(delays, [25]);
 });

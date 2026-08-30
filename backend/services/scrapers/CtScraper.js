@@ -29,12 +29,18 @@ const DEFAULT_HEADERS = {
 };
 
 export class CtScraper extends BaseScraper {
-    constructor({ httpClient = axios } = {}) {
+    constructor({
+        httpClient = axios,
+        sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+        imageRetryDelays = [1000, 3000, 7000, 15000, 30000]
+    } = {}) {
         super({
             source: 'ct',
             displayName: 'Character Tavern'
         });
         this.http = httpClient;
+        this.sleep = sleep;
+        this.imageRetryDelays = imageRetryDelays;
 
         // CT uses database blacklist file in data/
         this.blacklistFile = path.join(__dirname, '../../../data/ct-blacklist.txt');
@@ -260,21 +266,40 @@ export class CtScraper extends BaseScraper {
             headers.Cookie = this._currentCookies.join('; ');
         }
 
-        try {
-            const response = await this.http.get(url, {
-                responseType: 'arraybuffer',
-                headers,
-                timeout: 30000
-            });
-            const buffer = Buffer.from(response.data);
-            const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-            if (buffer.length < signature.length || !buffer.subarray(0, signature.length).equals(signature)) {
-                throw new Error(`Character Tavern image for ${normalizedPath} is not a valid PNG`);
+        const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+        let lastError;
+
+        for (let attempt = 0; attempt <= this.imageRetryDelays.length; attempt += 1) {
+            try {
+                const response = await this.http.get(url, {
+                    responseType: 'arraybuffer',
+                    headers,
+                    timeout: 30000
+                });
+                const buffer = Buffer.from(response.data);
+                if (buffer.length < signature.length || !buffer.subarray(0, signature.length).equals(signature)) {
+                    const error = new Error(`Character Tavern image for ${normalizedPath} is not a valid PNG`);
+                    error.code = 'CT_IMAGE_NOT_READY';
+                    throw error;
+                }
+                return buffer;
+            } catch (error) {
+                lastError = error;
+                const status = Number(error?.response?.status || 0);
+                const retryable = error?.code === 'CT_IMAGE_NOT_READY'
+                    || status === 404
+                    || status === 409
+                    || status === 425
+                    || status === 429
+                    || status >= 500;
+                const delay = this.imageRetryDelays[attempt];
+                if (!retryable || delay === undefined) break;
+                this.log.warn(`Character Tavern image for ${normalizedPath} is not ready; retrying in ${delay}ms`);
+                await this.sleep(delay);
             }
-            return buffer;
-        } catch (error) {
-            throw new Error(`Failed to download Character Tavern image for ${normalizedPath}: ${error.message}`, { cause: error });
         }
+
+        throw new Error(`Failed to download Character Tavern image for ${normalizedPath}: ${lastError.message}`, { cause: lastError });
     }
 
     deriveFeatureFlags(bundle) {
