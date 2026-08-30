@@ -46,17 +46,24 @@ test('Lance vector ETL batches embeddings and fulfills the durable worker contra
     }));
 
     let embeddingRequests = 0;
+    let activeEmbeddingRequests = 0;
+    let peakEmbeddingRequests = 0;
     const server = http.createServer(async (request, response) => {
         embeddingRequests += 1;
+        activeEmbeddingRequests += 1;
+        peakEmbeddingRequests = Math.max(peakEmbeddingRequests, activeEmbeddingRequests);
         let raw = '';
         for await (const chunk of request) raw += chunk;
+        await new Promise(resolve => setTimeout(resolve, 25));
         const body = JSON.parse(raw);
         const hasUnpairedSurrogate = body.input.some(value => /[\uD800-\uDFFF]/u.test(value));
         if (hasUnpairedSurrogate) {
+            activeEmbeddingRequests -= 1;
             response.writeHead(400, { 'content-type': 'application/json' });
             response.end(JSON.stringify({ error: 'unpaired surrogate' }));
             return;
         }
+        activeEmbeddingRequests -= 1;
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({
             data: body.input.map((value, index) => ({ index, embedding: index ? [0, 1, 0] : [1, 0, 0] }))
@@ -80,6 +87,7 @@ test('Lance vector ETL batches embeddings and fulfills the durable worker contra
             EMBEDDING_PROVIDER: 'openai',
             EMBEDDING_URL: `http://127.0.0.1:${port}`,
             EMBED_MODEL: 'test-model',
+            EMBEDDING_CONCURRENCY: '2',
             EMBEDDING_TOKEN_BUDGET: '8000'
         }
     });
@@ -89,6 +97,7 @@ test('Lance vector ETL batches embeddings and fulfills the durable worker contra
     });
     assert.equal(result.cardUpdates, 3);
     assert.equal(embeddingRequests, 2, 'large inputs should remain split across inference requests');
+    assert.equal(peakEmbeddingRequests, 2, 'configured embedding concurrency should be used');
 
     const connection = await lancedb.connect(lancePath);
     const table = await connection.openTable('test_vectors');

@@ -18,6 +18,7 @@ const embeddingUrl = process.env.EMBEDDING_URL || vectorConfig.embeddingUrl || v
 const embeddingApiKey = process.env.EMBEDDING_API_KEY || vectorConfig.embeddingApiKey || '';
 const embedModel = process.env.EMBED_MODEL || vectorConfig.embedModel;
 const batchSize = Math.max(1, Math.min(Number(process.env.EMBEDDING_BATCH_SIZE || vectorConfig.embedBatchSize) || 32, 128));
+const embeddingConcurrency = Math.max(1, Math.min(Number(process.env.EMBEDDING_CONCURRENCY) || 1, 8));
 const tokenBudget = Math.max(512, Number(process.env.EMBEDDING_TOKEN_BUDGET) || 24000);
 
 function parseIds(value) {
@@ -89,27 +90,34 @@ async function main() {
             return { document, text };
         });
 
+        const embeddingBatches = batches(items);
         const vectorDocuments = [];
-        for (const batch of batches(items)) {
-            const usable = batch.filter(item => item.text.trim());
-            const skipped = batch.length - usable.length;
-            stats.processed += skipped;
-            stats.skipped += skipped;
-            stats.skippedNoText += skipped;
-            if (!usable.length) continue;
-            const vectors = await requestEmbeddings({
-                provider: embeddingProvider,
-                baseUrl: embeddingUrl,
-                apiKey: embeddingApiKey,
-                model: embedModel,
-                texts: usable.map(item => item.text),
-                dimensions,
-                normalize: true,
-                signal: AbortSignal.timeout(Number(process.env.EMBEDDING_TIMEOUT_MS) || 300000)
-            });
-            vectorDocuments.push(...usable.map((item, index) => ({ ...item, vector: vectors[index] })));
-            stats.cardUpdates += usable.length;
-            stats.processed += usable.length;
+        for (let offset = 0; offset < embeddingBatches.length; offset += embeddingConcurrency) {
+            const embedded = await Promise.all(embeddingBatches.slice(offset, offset + embeddingConcurrency).map(async batch => {
+                const usable = batch.filter(item => item.text.trim());
+                if (!usable.length) return { usable, vectors: [] };
+                const vectors = await requestEmbeddings({
+                    provider: embeddingProvider,
+                    baseUrl: embeddingUrl,
+                    apiKey: embeddingApiKey,
+                    model: embedModel,
+                    texts: usable.map(item => item.text),
+                    dimensions,
+                    normalize: true,
+                    signal: AbortSignal.timeout(Number(process.env.EMBEDDING_TIMEOUT_MS) || 300000)
+                });
+                return { usable, vectors };
+            }));
+            for (let index = 0; index < embedded.length; index += 1) {
+                const batch = embeddingBatches[offset + index];
+                const { usable, vectors } = embedded[index];
+                const skipped = batch.length - usable.length;
+                stats.processed += skipped + usable.length;
+                stats.skipped += skipped;
+                stats.skippedNoText += skipped;
+                stats.cardUpdates += usable.length;
+                vectorDocuments.push(...usable.map((item, vectorIndex) => ({ ...item, vector: vectors[vectorIndex] })));
+            }
         }
         await backend.upsertVectorDocuments(vectorDocuments, { tableName, dimensions });
     } finally {
