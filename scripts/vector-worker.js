@@ -10,6 +10,7 @@ import { loadConfig } from '../config-loader.js';
 import { logger } from '../backend/utils/logger.js';
 import { LanceSearchBackend } from '../backend/services/search/LanceSearchBackend.js';
 import { parseVectorEtlResult, validateVectorEtlResult } from './vector-etl-contract.js';
+import { shouldPauseForArchiveSync } from './vector-worker-policy.js';
 
 const log = logger.scoped('VECTOR:WORKER');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -146,10 +147,12 @@ async function tick() {
     const generation = generations.currentBuild(spec);
     if (!generation) return false;
 
-    const activeSync = database.prepare("SELECT id FROM sync_runs WHERE status = 'running' LIMIT 1").get();
-    if (activeSync) {
-        log.info(`Pausing vector work while sync run ${activeSync.id} is active`);
-        return false;
+    if (shouldPauseForArchiveSync({ provider, setting: process.env.VECTOR_PAUSE_DURING_SYNC })) {
+        const activeSync = database.prepare("SELECT id FROM sync_runs WHERE status = 'running' LIMIT 1").get();
+        if (activeSync) {
+            log.info(`Pausing vector work while sync run ${activeSync.id} is active`);
+            return false;
+        }
     }
     if (provider === 'meilisearch') {
         const backlog = await meiliBacklog(config);

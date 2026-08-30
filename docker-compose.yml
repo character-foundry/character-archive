@@ -110,6 +110,7 @@ services:
       <<: *app-environment
       VECTOR_WORKER_BATCH_SIZE: ${VECTOR_WORKER_BATCH_SIZE:-100}
       VECTOR_MAX_MEILI_TASK_BACKLOG: ${VECTOR_MAX_MEILI_TASK_BACKLOG:-200}
+      VECTOR_PAUSE_DURING_SYNC: ${VECTOR_PAUSE_DURING_SYNC:-}
     depends_on:
       api:
         condition: service_healthy

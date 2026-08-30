@@ -105,7 +105,7 @@ docker compose run --rm archive-worker node scripts/repair-ct.js
 docker compose run --rm archive-worker node scripts/repair-ct.js --apply
 ```
 
-Create or resume a shadow vector generation through `POST /api/vector/reconcile`. The vector worker pauses during archive sync; when Meilisearch is selected it also pauses above 200 pending tasks. LanceDB generations batch embeddings and build their ANN index before completion. Generation activation requires a passing 120-query benchmark report and explicit approval. A Lance-only installation uses absolute quality floors; `--baseline` additionally compares it with an existing Meilisearch generation.
+Create or resume a shadow vector generation through `POST /api/vector/reconcile`. LanceDB indexing continues during archive sync because revisioned leases safely requeue cards changed during an embedding batch. Meilisearch pauses during archive sync by default and also pauses above 200 pending tasks. Set `VECTOR_PAUSE_DURING_SYNC` to explicitly override either provider policy. LanceDB generations batch embeddings and build their ANN index before completion. Generation activation requires a passing 120-query benchmark report and explicit approval. A Lance-only installation uses absolute quality floors; `--baseline` additionally compares it with an existing Meilisearch generation.
 
 Review and edit the generated fixture before treating it as a quality gate. The benchmark also enforces absolute hit-rate, MRR, and top-one floors, but hand-written intent queries are more representative than card names or taglines.
 
