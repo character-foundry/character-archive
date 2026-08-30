@@ -157,3 +157,6 @@ services:
 networks:
   archive-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: ${ARCHIVE_SUBNET:-10.250.0.0/24}
