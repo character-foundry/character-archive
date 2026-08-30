@@ -159,6 +159,15 @@ test('LanceDB vector search uses the same filters and response contract', async 
         { document: document({ id: '2', name: 'Pilot', source: 'chub', tags: ['sci-fi'] }), vector: [0, 1, 0], text: 'space pilot' },
         { document: document({ id: '3', name: 'Druid', source: 'ct', tags: ['fantasy'] }), vector: [0.8, 0.2, 0], text: 'forest druid' }
     ]);
+    await backend.upsertVectorDocuments([
+        { document: document({ id: '1', name: 'Fire Mage', source: 'ct', tags: ['fantasy'] }), vector: [1, 0, 0], text: 'fire mage' }
+    ]);
+    const vectorTable = await backend.openVectorTable();
+    assert.ok((await vectorTable.listVersions()).length > 1);
+    const optimizeStats = await backend.optimizeVector({ cleanupOlderThan: new Date(), deleteUnverified: true });
+    assert.ok(optimizeStats.prune.oldVersionsRemoved > 0);
+    assert.equal((await vectorTable.listVersions()).length, 1);
+    assert.equal(await vectorTable.countRows(), 3);
 
     const result = await backend.searchVector({
         text: 'magic',

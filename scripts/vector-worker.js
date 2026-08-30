@@ -20,9 +20,14 @@ const workerId = process.env.VECTOR_WORKER_ID || `${os.hostname()}:${process.pid
 const batchSize = Math.max(1, Math.min(Number(process.env.VECTOR_WORKER_BATCH_SIZE) || 100, 250));
 const pollMs = Math.max(500, Number(process.env.VECTOR_WORKER_POLL_MS) || 5000);
 const maxTaskBacklog = Math.max(1, Number(process.env.VECTOR_MAX_MEILI_TASK_BACKLOG) || 200);
+const configuredOptimizeInterval = Number(process.env.VECTOR_LANCE_OPTIMIZE_EVERY_BATCHES);
+const lanceOptimizeEveryBatches = Number.isFinite(configuredOptimizeInterval)
+    ? Math.max(0, Math.floor(configuredOptimizeInterval))
+    : 20;
 const runOnce = process.argv.includes('--once');
 let consecutiveFailures = 0;
 let circuitOpenUntil = 0;
+let lanceBatchesSinceOptimize = 0;
 let stopping = false;
 let activeChild = null;
 let forceKillTimer = null;
@@ -185,6 +190,33 @@ async function tick() {
         consecutiveFailures = 0;
         circuitOpenUntil = 0;
         log.info(`Completed ${items.length} vector work items for generation ${generation.id}`);
+        if (provider === 'lancedb' && lanceOptimizeEveryBatches > 0) {
+            lanceBatchesSinceOptimize += 1;
+            if (lanceBatchesSinceOptimize >= lanceOptimizeEveryBatches) {
+                const lance = new LanceSearchBackend({
+                    uri: process.env.SEARCH_LANCE_PATH || config.search?.lancedb?.uri,
+                    vectorTableName: generation.cards_index,
+                    vectorConfig: { ...config.vectorSearch, enabled: true, embedDimensions: generation.dimensions }
+                });
+                try {
+                    const stats = await lance.optimizeVector({
+                        tableName: generation.cards_index,
+                        cleanupOlderThan: new Date(),
+                        deleteUnverified: true
+                    });
+                    lanceBatchesSinceOptimize = 0;
+                    log.info(`Optimized LanceDB vector table ${generation.cards_index}`, stats);
+                } catch (error) {
+                    log.error(`Failed to optimize LanceDB vector table ${generation.cards_index}; will retry`, error);
+                } finally {
+                    try {
+                        await lance.close();
+                    } catch (error) {
+                        log.error(`Failed to close optimized LanceDB vector table ${generation.cards_index}`, error);
+                    }
+                }
+            }
+        }
     } catch (error) {
         if (stopping) {
             const released = generations.releaseItems(items.map(item => item.id));

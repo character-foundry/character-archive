@@ -499,6 +499,15 @@ export class LanceSearchBackend {
         return table.optimize();
     }
 
+    async optimizeVector({
+        tableName = this.vectorTableName,
+        cleanupOlderThan,
+        deleteUnverified = false
+    } = {}) {
+        const table = await this.openVectorTable({ tableName });
+        return table.optimize({ cleanupOlderThan, deleteUnverified });
+    }
+
     async createVectorIndex({ tableName = this.vectorTableName } = {}) {
         const table = await this.openVectorTable({ tableName });
         await table.createIndex('vector', {
