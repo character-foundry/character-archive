@@ -1,5 +1,6 @@
 x-app: &app
   image: character-archive:${ARCHIVE_IMAGE_TAG:-latest}
+  user: "${ARCHIVE_UID:-1000}:${ARCHIVE_GID:-1000}"
   build:
     context: .
     dockerfile: Dockerfile

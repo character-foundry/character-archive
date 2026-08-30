@@ -2,6 +2,8 @@
 
 The production stack separates the API, Next.js web UI, archive worker, and vector worker. LanceDB runs embedded in the application containers; Meilisearch is an optional Compose profile. Every application container uses Node 22. Inference remains external; the stack does not start llama.cpp or copy model weights.
 
+Application containers run as `ARCHIVE_UID:ARCHIVE_GID` (default `1000:1000`) so files created in writable bind mounts remain readable by host-side backup and maintenance jobs.
+
 ## Persistent layout
 
 Copy `.env.example` to `.env`, then create the writable directories and bind-mounted state files:
