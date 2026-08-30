@@ -105,14 +105,19 @@ docker compose run --rm archive-worker node scripts/repair-ct.js
 docker compose run --rm archive-worker node scripts/repair-ct.js --apply
 ```
 
-Create or resume a shadow vector generation through `POST /api/vector/reconcile`. The vector worker pauses during archive sync; when Meilisearch is selected it also pauses above 200 pending tasks. LanceDB generations batch embeddings and build their ANN index before completion. Generation activation requires a passing 120-query benchmark report and explicit approval; the benchmark can compare a Meilisearch baseline with a LanceDB candidate.
+Create or resume a shadow vector generation through `POST /api/vector/reconcile`. The vector worker pauses during archive sync; when Meilisearch is selected it also pauses above 200 pending tasks. LanceDB generations batch embeddings and build their ANN index before completion. Generation activation requires a passing 120-query benchmark report and explicit approval. A Lance-only installation uses absolute quality floors; `--baseline` additionally compares it with an existing Meilisearch generation.
 
 Review and edit the generated fixture before treating it as a quality gate. The benchmark also enforces absolute hit-rate, MRR, and top-one floors, but hand-written intent queries are more representative than card names or taglines.
 
 ```bash
-docker compose run --rm vector-worker node scripts/build-vector-benchmark-fixture.js
+docker compose run --rm vector-worker node scripts/build-vector-benchmark-fixture.js \
+  --output /state/benchmarks/vector-search-queries.json
 docker compose run --rm vector-worker node scripts/benchmark-vector-generations.js \
-  --baseline 1 --candidate 2
+  --candidate 2 \
+  --fixture /state/benchmarks/vector-search-queries.json \
+  --output /state/benchmarks/vector-report.json
+
+# Add `--baseline 1` when a complete Meilisearch generation is available.
 ```
 
 ## Rollback

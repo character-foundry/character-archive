@@ -8,6 +8,7 @@ import { getVectorGenerationRepository } from '../backend/db/repositories/Vector
 import { requestEmbeddings } from '../backend/services/EmbeddingClient.js';
 import { LanceSearchBackend } from '../backend/services/search/LanceSearchBackend.js';
 import { loadConfig, writeJsonAtomically } from '../config-loader.js';
+import { evaluateVectorBenchmark } from './vector-benchmark-policy.js';
 
 function arg(name) {
     const index = process.argv.indexOf(name);
@@ -24,7 +25,7 @@ const baselineId = Number(arg('--baseline'));
 const candidateId = Number(arg('--candidate'));
 const fixturePath = path.resolve(arg('--fixture') || 'benchmarks/vector-search-queries.json');
 const outputPath = path.resolve(arg('--output') || `benchmarks/vector-report-${Date.now()}.json`);
-if (!baselineId || !candidateId) throw new Error('Usage: --baseline ID --candidate ID [--fixture FILE] [--output FILE]');
+if (!candidateId) throw new Error('Usage: --candidate ID [--baseline ID] [--fixture FILE] [--output FILE]');
 
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
 if (!Array.isArray(fixture) || fixture.length < 120) throw new Error('Vector benchmark fixture must contain at least 120 queries');
@@ -36,11 +37,11 @@ for (const item of fixture) {
 
 initDatabase({ skipTagRebuild: true, skipTokenBackfill: true });
 const repository = getVectorGenerationRepository();
-const baseline = repository.get(baselineId);
+const baseline = baselineId ? repository.get(baselineId) : null;
 const candidate = repository.get(candidateId);
-if (!baseline || !candidate) throw new Error('Baseline or candidate generation was not found');
-if (!['ready', 'active'].includes(baseline.status) || !['ready', 'active'].includes(candidate.status)) {
-    throw new Error('Both generations must be ready or active before benchmarking');
+if ((baselineId && !baseline) || !candidate) throw new Error('Baseline or candidate generation was not found');
+if ((baseline && !['ready', 'active'].includes(baseline.status)) || !['ready', 'active'].includes(candidate.status)) {
+    throw new Error('Every selected generation must be ready or active before benchmarking');
 }
 
 const config = loadConfig();
@@ -116,29 +117,20 @@ async function runGeneration(generation) {
     };
 }
 
-const baselineResult = await runGeneration(baseline);
+const baselineResult = baseline ? await runGeneration(baseline) : null;
 const candidateResult = await runGeneration(candidate);
-let overlapTotal = 0;
-for (let index = 0; index < fixture.length; index++) {
-    const baselineSet = new Set(baselineResult.results[index]);
-    overlapTotal += candidateResult.results[index].filter(id => baselineSet.has(id)).length / 10;
+let overlap10 = null;
+if (baselineResult) {
+    let overlapTotal = 0;
+    for (let index = 0; index < fixture.length; index++) {
+        const baselineSet = new Set(baselineResult.results[index]);
+        overlapTotal += candidateResult.results[index].filter(id => baselineSet.has(id)).length / 10;
+    }
+    overlap10 = overlapTotal / fixture.length;
 }
-const overlap10 = overlapTotal / fixture.length;
 
-const thresholds = {
-    hitRate10Floor: Math.max(0.8, baselineResult.hitRate10 - 0.02),
-    mrr10Floor: Math.max(0.6, baselineResult.mrr10 - 0.03),
-    top1RateFloor: Math.max(0.5, baselineResult.top1Rate - 0.03),
-    overlap10Floor: 0.75,
-    latencyP95CeilingMs: Math.max(baselineResult.latencyP95Ms * 1.25, baselineResult.latencyP95Ms + 50)
-};
-const passed = candidateResult.hitRate10 >= thresholds.hitRate10Floor
-    && candidateResult.mrr10 >= thresholds.mrr10Floor
-    && candidateResult.top1Rate >= thresholds.top1RateFloor
-    && overlap10 >= thresholds.overlap10Floor
-    && candidateResult.latencyP95Ms <= thresholds.latencyP95CeilingMs;
-
-delete baselineResult.results;
+const { passed, thresholds } = evaluateVectorBenchmark({ baseline: baselineResult, candidate: candidateResult, overlap10 });
+if (baselineResult) delete baselineResult.results;
 delete candidateResult.results;
 const report = {
     passed,
