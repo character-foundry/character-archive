@@ -6,6 +6,7 @@ import { MeiliSearch } from 'meilisearch';
 import { initDatabase } from '../backend/database.js';
 import { getVectorGenerationRepository } from '../backend/db/repositories/VectorGenerationRepository.js';
 import { requestEmbeddings } from '../backend/services/EmbeddingClient.js';
+import { LanceSearchBackend } from '../backend/services/search/LanceSearchBackend.js';
 import { loadConfig, writeJsonAtomically } from '../config-loader.js';
 
 function arg(name) {
@@ -48,26 +49,47 @@ const meili = new MeiliSearch({ host: config.meilisearch.host, apiKey: config.me
 async function runGeneration(generation) {
     const results = [];
     const latencies = [];
+    const lanceGeneration = generation.embedder_name.startsWith('lance-');
+    const lance = lanceGeneration ? new LanceSearchBackend({
+        uri: process.env.SEARCH_LANCE_PATH || config.search?.lancedb?.uri,
+        vectorTableName: generation.cards_index,
+        maxTotalHits: 1000,
+        vectorConfig: {
+            ...config.vectorSearch,
+            enabled: true,
+            cardsIndex: generation.cards_index,
+            embedModel: generation.model_name,
+            embedDimensions: generation.dimensions
+        }
+    }) : null;
     for (const fixtureItem of fixture) {
         const startedAt = performance.now();
-        const [vector] = await requestEmbeddings({
-            provider: config.vectorSearch.embeddingProvider,
-            baseUrl: config.vectorSearch.embeddingUrl || config.vectorSearch.ollamaUrl,
-            apiKey: config.vectorSearch.embeddingApiKey,
-            model: generation.model_name,
-            texts: [fixtureItem.query],
-            dimensions: generation.dimensions,
-            normalize: true
-        });
-        const response = await meili.index(generation.cards_index).search(fixtureItem.query, {
-            vector,
-            hybrid: { embedder: generation.embedder_name, semanticRatio: 1 },
-            limit: 10,
-            attributesToRetrieve: ['id']
-        });
+        let ids;
+        if (lance) {
+            const response = await lance.searchVector({ text: fixtureItem.query, limit: 10 });
+            ids = response.ids;
+        } else {
+            const [vector] = await requestEmbeddings({
+                provider: config.vectorSearch.embeddingProvider,
+                baseUrl: config.vectorSearch.embeddingUrl || config.vectorSearch.ollamaUrl,
+                apiKey: config.vectorSearch.embeddingApiKey,
+                model: generation.model_name,
+                texts: [fixtureItem.query],
+                dimensions: generation.dimensions,
+                normalize: true
+            });
+            const response = await meili.index(generation.cards_index).search(fixtureItem.query, {
+                vector,
+                hybrid: { embedder: generation.embedder_name, semanticRatio: 1 },
+                limit: 10,
+                attributesToRetrieve: ['id']
+            });
+            ids = response.hits.map(hit => String(hit.id));
+        }
         latencies.push(performance.now() - startedAt);
-        results.push(response.hits.map(hit => String(hit.id)));
+        results.push(ids);
     }
+    await lance?.close();
 
     let hits = 0;
     let reciprocalRank = 0;

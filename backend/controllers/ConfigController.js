@@ -4,12 +4,14 @@ import { appConfig } from '../services/ConfigState.js';
 import { sillyTavernService } from '../services/SillyTavernService.js';
 import { schedulerService } from '../services/SchedulerService.js';
 import {
-    configureSearchIndex,
-    configureVectorSearch,
+    configureSearchBackend,
+    configuredProvider,
+    getSearchProvider,
     isSearchIndexEnabled,
-    drainSearchIndexQueue,
-    purgeVectorChunkArtifacts
-} from '../services/search-index.js';
+    assertSearchBackendReady,
+    drainSearchIndexQueue
+} from '../services/SearchService.js';
+import { purgeVectorChunkArtifacts } from '../services/search-index.js';
 import { logger } from '../utils/logger.js';
 
 const log = logger.scoped('CONFIG');
@@ -28,6 +30,10 @@ class ConfigController {
                 return res.status(400).json({ error: 'use_timeline requires a valid API key' });
             }
 
+            if (configuredProvider(newConfig) === 'lancedb') {
+                await assertSearchBackendReady(newConfig);
+            }
+
             saveConfig(newConfig);
 
             // Mutate the singleton to update all references
@@ -35,9 +41,8 @@ class ConfigController {
 
             sillyTavernService.resetCache();
 
-            configureSearchIndex(appConfig.meilisearch);
-            configureVectorSearch(appConfig.vectorSearch || {});
-            if (chunksWereEnabled && appConfig?.vectorSearch?.enableChunks === false) {
+            configureSearchBackend(appConfig);
+            if (getSearchProvider() === 'meilisearch' && chunksWereEnabled && appConfig?.vectorSearch?.enableChunks === false) {
                 await purgeVectorChunkArtifacts();
             }
 

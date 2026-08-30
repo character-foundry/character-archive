@@ -1949,6 +1949,19 @@ export async function rebuildSearchIndexFromRows(rows = []) {
         ? rows.map(buildSearchDocumentFromRow).filter(Boolean)
         : [];
 
+    return rebuildSearchIndexFromDocumentBatches((async function* () {
+        for (let offset = 0; offset < documents.length; offset += 1000) {
+            yield documents.slice(offset, offset + 1000);
+        }
+    })(), { expectedDocuments: documents.length });
+}
+
+export async function rebuildSearchIndexFromDocumentBatches(batches, { expectedDocuments = null } = {}) {
+    ensureMeiliEnabled();
+    if (!batches || typeof batches[Symbol.asyncIterator] !== 'function') {
+        throw new TypeError('Meilisearch rebuild batches must be an async iterable');
+    }
+
     log.info('Applying default settings to index');
     await applyDefaultSettings();
 
@@ -1956,20 +1969,19 @@ export async function rebuildSearchIndexFromRows(rows = []) {
     const deleteTask = await meiliIndex.deleteAllDocuments();
     await waitForIndexTask(meiliIndex, deleteTask);
 
-    const batches = chunkArray(documents, 1000);
-    log.info(`Indexing ${documents.length} documents in ${batches.length} batches`);
-
-    for (let i = 0; i < batches.length; i += 1) {
-        const batch = batches[i];
+    log.info(`Indexing ${expectedDocuments ?? 'streamed'} documents in bounded batches`);
+    let documents = 0;
+    let batchNumber = 0;
+    for await (const batch of batches) {
         if (batch.length === 0) continue;
         const task = await meiliIndex.addDocuments(batch, { primaryKey: 'id' });
         await waitForIndexTask(meiliIndex, task);
-        log.info(`Indexed batch ${i + 1}/${batches.length} (${batch.length} documents)`);
+        documents += batch.length;
+        batchNumber += 1;
+        log.info(`Indexed batch ${batchNumber} (${batch.length} documents; ${documents} total)`);
     }
 
-    return {
-        documents: documents.length
-    };
+    return { documents };
 }
 
 let searchIndexRefreshInFlight = false;

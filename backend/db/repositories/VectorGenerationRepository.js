@@ -138,8 +138,8 @@ export function createVectorGenerationRepository(database) {
             return database.prepare('SELECT * FROM vector_generations ORDER BY id DESC').all().map(row => hydrate(database, row));
         },
 
-        currentBuild() {
-            const row = database.prepare(`
+        currentBuild(spec = null) {
+            const rows = database.prepare(`
                 SELECT * FROM vector_generations
                 WHERE status = 'building' OR active = 1
                 ORDER BY CASE
@@ -151,8 +151,13 @@ export function createVectorGenerationRepository(database) {
                     WHEN status = 'building' THEN 1
                     ELSE 2
                 END, id ASC
-                LIMIT 1
-            `).get();
+            `).all();
+            const row = !spec ? rows[0] : rows.find(candidate => (
+                candidate.model_name === spec.modelName
+                && candidate.embedder_name === spec.embedderName
+                && Number(candidate.dimensions) === Number(spec.dimensions)
+                && Boolean(candidate.chunks_index) === (spec.chunksIndexBase !== '' && spec.chunksEnabled !== false)
+            ));
             return hydrate(database, row);
         },
 

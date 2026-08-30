@@ -8,11 +8,13 @@ import { initDatabase, getDatabase } from '../backend/database.js';
 import { getVectorGenerationRepository } from '../backend/db/repositories/VectorGenerationRepository.js';
 import { loadConfig } from '../config-loader.js';
 import { logger } from '../backend/utils/logger.js';
+import { LanceSearchBackend } from '../backend/services/search/LanceSearchBackend.js';
 import { parseVectorEtlResult, validateVectorEtlResult } from './vector-etl-contract.js';
 
 const log = logger.scoped('VECTOR:WORKER');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const etlPath = path.join(__dirname, 'etl_cards_vector_search.js');
+const meiliEtlPath = path.join(__dirname, 'etl_cards_vector_search.js');
+const lanceEtlPath = path.join(__dirname, 'etl_cards_lancedb.js');
 const workerId = process.env.VECTOR_WORKER_ID || `${os.hostname()}:${process.pid}`;
 const batchSize = Math.max(1, Math.min(Number(process.env.VECTOR_WORKER_BATCH_SIZE) || 100, 250));
 const pollMs = Math.max(500, Number(process.env.VECTOR_WORKER_POLL_MS) || 5000);
@@ -28,14 +30,26 @@ initDatabase({ skipTagRebuild: true, skipTokenBackfill: true });
 const database = getDatabase();
 const generations = getVectorGenerationRepository();
 
+function searchProvider(config) {
+    const environmentProvider = String(process.env.SEARCH_BACKEND || '').trim().toLowerCase();
+    if (environmentProvider === 'lancedb' || environmentProvider === 'meilisearch') return environmentProvider;
+    const provider = String(config.search?.backend || '').trim().toLowerCase();
+    if (config.search?.enabled === true && (provider === 'lancedb' || provider === 'meilisearch')) return provider;
+    return config.meilisearch?.enabled === true ? 'meilisearch' : 'disabled';
+}
+
 function specFromConfig(config) {
+    const provider = searchProvider(config);
+    const configuredEmbedder = config.vectorSearch?.embedderName;
     return {
         modelName: config.vectorSearch?.embedModel,
-        embedderName: config.vectorSearch?.embedderName,
+        embedderName: provider === 'lancedb' && !String(configuredEmbedder).startsWith('lance-')
+            ? `lance-${configuredEmbedder}`
+            : configuredEmbedder,
         dimensions: Number(config.vectorSearch?.embedDimensions),
         cardsIndexBase: config.vectorSearch?.cardsIndex || 'cards_vsem',
-        chunksIndexBase: config.vectorSearch?.chunksIndex || 'card_chunks',
-        chunksEnabled: config.vectorSearch?.enableChunks !== false
+        chunksIndexBase: provider === 'lancedb' ? '' : (config.vectorSearch?.chunksIndex || 'card_chunks'),
+        chunksEnabled: provider === 'lancedb' ? false : config.vectorSearch?.enableChunks !== false
     };
 }
 
@@ -58,6 +72,7 @@ async function meiliBacklog(config) {
 function runEtl(items, generation, config) {
     const upserts = items.filter(item => item.action === 'upsert').map(item => item.card_id);
     const deletes = items.filter(item => item.action === 'delete').map(item => item.card_id);
+    const provider = searchProvider(config);
     const env = {
         ...process.env,
         LCR_VECTOR_IDS: upserts.join(','),
@@ -74,10 +89,12 @@ function runEtl(items, generation, config) {
         EMBEDDING_API_KEY: config.vectorSearch?.embeddingApiKey || '',
         MEILI_HOST: config.meilisearch?.host || '',
         MEILI_KEY: config.meilisearch?.apiKey || '',
+        SEARCH_LANCE_PATH: process.env.SEARCH_LANCE_PATH || config.search?.lancedb?.uri || '',
+        LANCE_VECTOR_TABLE: generation.cards_index,
         EMBEDDING_TOKEN_BUDGET: '8000'
     };
     return new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [etlPath], {
+        const child = spawn(process.execPath, [provider === 'lancedb' ? lanceEtlPath : meiliEtlPath], {
             cwd: path.join(__dirname, '..'),
             env,
             stdio: ['ignore', 'pipe', 'pipe']
@@ -121,9 +138,12 @@ function runEtl(items, generation, config) {
 async function tick() {
     if (stopping) return false;
     const config = loadConfig();
-    if (config.vectorSearch?.enabled !== true || config.meilisearch?.enabled !== true) return false;
-    if (process.env.VECTOR_AUTO_RECONCILE !== '0') generations.reconcile(specFromConfig(config));
-    const generation = generations.currentBuild();
+    const provider = searchProvider(config);
+    if (config.vectorSearch?.enabled !== true || provider === 'disabled') return false;
+    if (provider === 'meilisearch' && config.meilisearch?.enabled !== true) return false;
+    const spec = specFromConfig(config);
+    if (process.env.VECTOR_AUTO_RECONCILE !== '0') generations.reconcile(spec);
+    const generation = generations.currentBuild(spec);
     if (!generation) return false;
 
     const activeSync = database.prepare("SELECT id FROM sync_runs WHERE status = 'running' LIMIT 1").get();
@@ -131,10 +151,12 @@ async function tick() {
         log.info(`Pausing vector work while sync run ${activeSync.id} is active`);
         return false;
     }
-    const backlog = await meiliBacklog(config);
-    if (backlog > maxTaskBacklog) {
-        log.warn(`Pausing vector work: Meilisearch task backlog is ${backlog}`);
-        return false;
+    if (provider === 'meilisearch') {
+        const backlog = await meiliBacklog(config);
+        if (backlog > maxTaskBacklog) {
+            log.warn(`Pausing vector work: Meilisearch task backlog is ${backlog}`);
+            return false;
+        }
     }
     if (Date.now() < circuitOpenUntil) return false;
     if (stopping) return false;
@@ -143,6 +165,19 @@ async function tick() {
     if (!items.length) return false;
     try {
         await runEtl(items, generation, config);
+        const pendingBeforeClaim = generation.queued_items + generation.retry_items + generation.running_items;
+        if (provider === 'lancedb' && pendingBeforeClaim <= items.length && generation.dead_items === 0) {
+            const lance = new LanceSearchBackend({
+                uri: process.env.SEARCH_LANCE_PATH || config.search?.lancedb?.uri,
+                vectorTableName: generation.cards_index,
+                vectorConfig: { ...config.vectorSearch, enabled: true, embedDimensions: generation.dimensions }
+            });
+            try {
+                await lance.createVectorIndex({ tableName: generation.cards_index });
+            } finally {
+                await lance.close();
+            }
+        }
         generations.completeItems(items.map(item => item.id));
         consecutiveFailures = 0;
         circuitOpenUntil = 0;
@@ -163,14 +198,15 @@ async function tick() {
 
 async function main() {
     do {
+        let worked = false;
         try {
-            await tick();
+            worked = await tick();
         } catch (error) {
             log.error('Vector worker tick failed', error);
         }
         if (runOnce) break;
         if (stopping) break;
-        await new Promise(resolve => setTimeout(resolve, pollMs));
+        if (!worked) await new Promise(resolve => setTimeout(resolve, pollMs));
     } while (!stopping);
 }
 

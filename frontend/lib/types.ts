@@ -147,6 +147,16 @@ export interface Config {
     apiKey: string;
     indexName: string;
   };
+  search?: {
+    enabled: boolean;
+    backend: 'lancedb' | 'meilisearch';
+    lancedb?: {
+      uri: string;
+      tableName: string;
+      batchSize?: number;
+      maxTotalHits?: number;
+    };
+  };
   vectorSearch?: {
     enabled: boolean;
     enableChunks?: boolean;

@@ -1,7 +1,8 @@
 import { getDatabase } from '../database.js';
 import { getVectorGenerationRepository } from '../db/repositories/VectorGenerationRepository.js';
 import { appConfig } from '../services/ConfigState.js';
-import { configureVectorSearch, getVectorRuntimeStatus } from '../services/search-index.js';
+import { getSearchProvider, getVectorRuntimeStatus } from '../services/SearchService.js';
+import { configureSearchBackend } from '../services/SearchService.js';
 import { saveConfig } from '../../config-loader.js';
 import { logger } from '../utils/logger.js';
 
@@ -9,13 +10,17 @@ const log = logger.scoped('VECTOR:API');
 
 function configuredSpec(overrides = {}) {
     const vector = appConfig.vectorSearch || {};
+    const lance = appConfig.search?.enabled === true && appConfig.search?.backend === 'lancedb';
+    const configuredEmbedder = overrides.embedderName || vector.embedderName;
     return {
         modelName: overrides.modelName || vector.embedModel,
-        embedderName: overrides.embedderName || vector.embedderName,
+        embedderName: lance && !String(configuredEmbedder).startsWith('lance-')
+            ? `lance-${configuredEmbedder}`
+            : configuredEmbedder,
         dimensions: Number(overrides.dimensions || vector.embedDimensions),
         cardsIndexBase: overrides.cardsIndexBase || vector.cardsIndex || 'cards_vsem',
-        chunksIndexBase: overrides.chunksIndexBase ?? vector.chunksIndex ?? 'card_chunks',
-        chunksEnabled: overrides.chunksEnabled ?? vector.enableChunks !== false,
+        chunksIndexBase: lance ? '' : (overrides.chunksIndexBase ?? vector.chunksIndex ?? 'card_chunks'),
+        chunksEnabled: lance ? false : (overrides.chunksEnabled ?? vector.enableChunks !== false),
         forceNewGeneration: overrides.forceNewGeneration === true
     };
 }
@@ -65,13 +70,22 @@ class VectorController {
                 }
                 const candidate = repository.get(generationId);
                 if (!candidate) return res.status(404).json({ error: 'Vector generation not found' });
+                const candidateProvider = String(candidate.embedder_name || '').startsWith('lance-')
+                    ? 'lancedb'
+                    : 'meilisearch';
+                const activeProvider = getSearchProvider();
+                if (candidateProvider !== activeProvider) {
+                    return res.status(409).json({
+                        error: `Vector generation ${generationId} belongs to ${candidateProvider}, but ${activeProvider} is the active search provider`
+                    });
+                }
                 const nextVectorConfig = {
                     ...(appConfig.vectorSearch || {}),
                     cardsIndex: candidate.cards_index,
                     chunksIndex: candidate.chunks_index || '',
                     enableChunks: Boolean(candidate.chunks_index),
                     embedModel: candidate.model_name,
-                    embedderName: candidate.embedder_name,
+                    embedderName: candidate.embedder_name.replace(/^lance-/, ''),
                     embedDimensions: candidate.dimensions
                 };
                 const nextConfig = { ...appConfig, vectorSearch: nextVectorConfig };
@@ -96,7 +110,7 @@ class VectorController {
                     throw error;
                 }
                 Object.assign(appConfig, nextConfig);
-                configureVectorSearch(nextVectorConfig);
+                configureSearchBackend(appConfig);
                 return res.json(generation);
             }
 

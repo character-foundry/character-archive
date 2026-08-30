@@ -6,11 +6,12 @@ This project allows you to mirror character cards from multiple sources ([Chub.a
 
 ## Key Features
 
-*   **Multi-Source Archiving:** Syncs from four sources - Chub.ai (via API), Character Tavern (via Meilisearch), RisuAI, and Wyvern.
+*   **Multi-Source Archiving:** Syncs from four sources - Chub.ai, Character Tavern, RisuAI, and Wyvern.
 *   **Offline-First:** Downloads character cards (PNGs + JSON) and caches all gallery images/external assets locally.
 *   **Advanced Search:**
     *   **SQL Search:** Fast filtering by tags, author, tokens, dates, and flags.
-    *   **Semantic Vector Search:** (Optional) Use Ollama + Meilisearch to find characters by "vibe" or description, even if keywords don't match. Whole-card semantic search is the baseline; chunk vectors are optional if you also want snippet-level semantic matches.
+    *   **Interchangeable Search:** LanceDB provides a lightweight embedded BM25 + vector index; Meilisearch remains available for archives large enough to justify a dedicated search service.
+    *   **Semantic Vector Search:** (Optional) Use Ollama or an OpenAI-compatible endpoint to find characters by "vibe" or description, even if keywords do not match.
     *   **Boolean Logic:** Full support for `AND`, `OR`, `NOT`, and parenthetical grouping in search queries.
 *   **Integrations:**
     *   **SillyTavern:** One-click push to a running SillyTavern instance. Tracks which cards are already loaded.
@@ -25,7 +26,7 @@ This project allows you to mirror character cards from multiple sources ([Chub.a
 *   **Node.js:** Version 22 or 23. Node 24 is not supported by this release.
 *   **pnpm:** Package manager (required for workspace dependencies).
 *   **SQLite:** (Bundled with Node.js drivers, no separate install usually needed).
-*   **Meilisearch (Optional):** Version 1.40+ recommended (required for advanced/vector search and Character Tavern sync).
+*   **Search:** LanceDB is embedded. Meilisearch 1.40+ is optional and intended for very large archives.
 *   **Embedding endpoint (Optional):** Ollama or an OpenAI-compatible embeddings endpoint is required only for semantic vector search.
 
 ### Dependencies
@@ -103,6 +104,20 @@ The application relies on a `config.json` file. The tracked loader creates it au
         }
         ```
 
+    *   **Search backend:**
+        ```json
+        "search": {
+            "enabled": true,
+            "backend": "lancedb",
+            "lancedb": {
+                "uri": "./search.lance",
+                "tableName": "cards",
+                "maxTotalHits": 10000
+            }
+        }
+        ```
+        Change `backend` to `meilisearch` and enable the `meilisearch` config block to use the external provider. The `/api/cards` query parameters do not change. Portable filters support the documented comparison operators, `AND`/`OR`/`NOT`, parentheses, booleans, numbers, strings, and tag membership; raw Meilisearch-only filter expressions are not portable to LanceDB.
+
     *   **Vector Search:**
         ```json
         "vectorSearch": {
@@ -116,7 +131,7 @@ The application relies on a `config.json` file. The tracked loader creates it au
             "embedModel": "snowflake-arctic-embed2:latest"
         }
         ```
-        `enableChunks: false` gives you the lower-overhead whole-card semantic index only. Set it to `true` if you also want the optional `card_chunks` index for semantic snippets and chunk reranking.
+        LanceDB uses a batched whole-card vector per card. Meilisearch also supports the optional chunk index when `enableChunks` is true.
 
 ### 4. Running the Application
 
@@ -137,7 +152,7 @@ pnpm prod
 
 ### Docker Deployment
 
-Run Character Archive and Meilisearch using Docker Compose:
+Run Character Archive with embedded LanceDB using Docker Compose:
 
 ```bash
 # From parent directory containing both character-archive/ and character-foundry/
@@ -159,14 +174,17 @@ sqlite3 runtime/state/cards.db 'PRAGMA journal_mode=WAL;'
 
 # Start services
 docker compose up -d
+
+# Optional dedicated Meilisearch provider
+docker compose --profile meilisearch up -d
 ```
 
 Access the application:
 *   **Frontend:** http://localhost:3177
 *   **Backend API:** http://localhost:6969
-*   **Meilisearch:** http://localhost:7700
+*   **Meilisearch (profile only):** http://localhost:7700
 
-The writable configuration and SQLite files live under `runtime/state`; scraper blacklists, cooldowns, and tag aliases live under `data`. To migrate an existing live database, use SQLite's `.backup` command instead of copying its main file while writers are running. The shipped Compose stack pins Meilisearch to `v1.40.0`, caps it at `32 GiB` RAM, and sets `MEILI_MAX_INDEXING_MEMORY=24GiB` to avoid the runaway-memory behavior seen in earlier uncapped deployments.
+The writable configuration, SQLite database, and LanceDB index live under `runtime/state`; scraper blacklists, cooldowns, and tag aliases live under `data`. To migrate an existing live database, use SQLite's `.backup` command instead of copying its main file while writers are running. The optional Meilisearch profile is pinned to `v1.40.0`, capped at `32 GiB` RAM, and given a `24GiB` indexing budget.
 
 For detailed Docker configuration, see [docker/README.md](docker/README.md).
 
@@ -229,7 +247,7 @@ To ensure your archive is truly offline:
 ## Advanced Configuration
 
 ### Vector Search Setup (Optional)
-1.  Install **Meilisearch** and choose either Ollama or an OpenAI-compatible embedding endpoint.
+1.  Enable either the embedded **LanceDB** backend or the optional **Meilisearch** backend, then choose an Ollama or OpenAI-compatible embedding endpoint.
 2.  For Ollama, pull an embedding model:
     ```bash
     ollama pull snowflake-arctic-embed2
@@ -246,7 +264,7 @@ To ensure your archive is truly offline:
     ```
     Set `embeddingProvider` to `ollama` or `openai`, and set `embeddingUrl`, `embeddingApiKey`, and `embedModel` for that endpoint. `ollamaUrl` remains supported for older configs.
 
-    *This creates or resumes a model-aware shadow index, reads cards in bounded batches, and only marks work complete after Meilisearch confirms its task. It may take a long time. Search continues using the active generation while the shadow builds.*
+    *This creates or resumes a provider-aware shadow index and reads cards in bounded, checkpointed batches. LanceDB batches whole-card embedding requests and builds a compressed HNSW-SQ index before marking the final batch complete. Meilisearch still waits for its indexing tasks. Search continues using the active generation while the shadow builds.*
     The legacy `pnpm vector:backfill` command remains available for targeted repair, but it is not the normal full-rebuild path.
 6.  If you only want to remove chunk vectors while keeping whole-card vectors, run:
     ```bash
@@ -256,7 +274,8 @@ To ensure your archive is truly offline:
 ### Maintenance Scripts
 *   `pnpm update-metadata`: Refreshes metadata for all local cards from their JSON files.
 *   `pnpm fix:flags`: Scans all cards and updates database feature flags (like `hasEmbeddedImages`).
-*   `pnpm sync:search`: Pushes all local database content to Meilisearch (for lexical search).
+*   `pnpm sync:search`: Rebuilds the selected lexical search provider from SQLite.
+*   `pnpm sync:meilisearch`: Explicitly rebuilds Meilisearch even when it is not the selected provider.
 
 ### Logging
 The application uses a centralized logging system with scoped loggers for each component. Log output follows the format `[LEVEL][SCOPE] message`.
@@ -281,8 +300,8 @@ pnpm dev 2>&1 | grep '\[SYNC\]'
     Ensure you are running `pnpm sync` from the project root. If using the script directly, ensure the database is initialized.
 *   **404 on Refresh:**
     Refreshing Character Tavern cards is not supported individually (only bulk sync). The UI will now warn you instead of crashing.
-*   **Meilisearch Errors:**
-    If searches fail, ensure Meilisearch is running. If you recently changed schema, run `pnpm sync:search`.
+*   **Search Errors:**
+    Run `pnpm sync:search` after selecting a provider or changing its schema. If Meilisearch is selected, also ensure its service is running.
 *   **`card_chunks` Missing:**
     If `vectorSearch.enableChunks` is `false`, a missing `card_chunks` index is expected. Whole-card vector search still works; re-enable chunks and rerun `pnpm vector:backfill` only if you want semantic snippets/chunk reranking back.
 *   **"Missing Config":**
@@ -298,5 +317,6 @@ pnpm dev 2>&1 | grep '\[SYNC\]'
 *   **Images/Metadata:** `static/` - Contains all your downloaded card PNGs and JSONs.
 *   **Asset Cache:** `static/cached-assets/` - Cached galleries and external images.
 *   **Config:** `config.json` - Your local settings and secrets.
+*   **Embedded search:** `search.lance/` - LanceDB lexical and vector tables.
 
 **Note:** All user data is git-ignored. You can safely pull updates to the code without overwriting your library.

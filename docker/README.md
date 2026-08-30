@@ -1,6 +1,6 @@
 # Docker deployment
 
-The production stack separates the API, Next.js web UI, archive worker, vector worker, and Meilisearch. Every application container uses Node 22. Inference remains external; the stack does not start llama.cpp or copy model weights.
+The production stack separates the API, Next.js web UI, archive worker, and vector worker. LanceDB runs embedded in the application containers; Meilisearch is an optional Compose profile. Every application container uses Node 22. Inference remains external; the stack does not start llama.cpp or copy model weights.
 
 ## Persistent layout
 
@@ -18,7 +18,7 @@ for file in data/tag-aliases.json data/risuai-cooldown.json data/wyvern-cooldown
 done
 ```
 
-`runtime/state` must contain `config.json` and `cards.db`. SQLite creates its WAL and shared-memory files beside the database, so the entire directory is mounted instead of a single database file. Card artifacts, scraper state, backups, and Meilisearch each use separate mounts.
+`runtime/state` must contain `config.json` and `cards.db`; it also stores `search.lance` when the embedded backend is enabled. SQLite creates its WAL and shared-memory files beside the database, so the entire directory is mounted instead of a single database file. Card artifacts, scraper state, backups, and optional Meilisearch data each use separate mounts.
 
 Create a consistent database copy while the current service is live:
 
@@ -43,7 +43,7 @@ The Docker build uses the sibling `../character-foundry` checkout as a named Bui
 docker compose build
 APP_PORT=16969 FRONTEND_PORT=13177 MEILI_PORT=17700 \
 MEILI_DATA_DIR=./runtime/meili-shadow \
-docker compose up -d meilisearch api web
+docker compose --profile meilisearch up -d meilisearch api web
 ```
 
 For a realistic search comparison, restore a Meilisearch dump into `runtime/meili-shadow` first. Do not point two running Meilisearch processes at the same `data.ms` directory.
@@ -69,7 +69,7 @@ docker compose logs --tail=200 api web meilisearch
 docker compose down
 docker compose up -d
 docker compose ps
-docker compose logs --tail=200 api archive-worker vector-worker meilisearch
+docker compose logs --tail=200 api archive-worker vector-worker
 ```
 
 The service memory ceilings are:
@@ -80,7 +80,7 @@ The service memory ceilings are:
 | Web | 1 GiB |
 | Archive worker | 4 GiB |
 | Vector worker | 8 GiB |
-| Meilisearch | 32 GiB, with a 24 GiB indexing budget |
+| Meilisearch (optional profile) | 32 GiB, with a 24 GiB indexing budget |
 
 Container logs rotate at 25 MiB with four files. Meilisearch has no swap allowance beyond its 32 GiB cap.
 
@@ -105,7 +105,7 @@ docker compose run --rm archive-worker node scripts/repair-ct.js
 docker compose run --rm archive-worker node scripts/repair-ct.js --apply
 ```
 
-Create or resume a shadow vector generation through `POST /api/vector/reconcile`. The vector worker pauses during archive sync and whenever Meilisearch has more than 200 pending tasks. Generation activation requires a passing 120-query benchmark report and explicit approval; destructive flushing remains CLI-only.
+Create or resume a shadow vector generation through `POST /api/vector/reconcile`. The vector worker pauses during archive sync; when Meilisearch is selected it also pauses above 200 pending tasks. LanceDB generations batch embeddings and build their ANN index before completion. Generation activation requires a passing 120-query benchmark report and explicit approval; the benchmark can compare a Meilisearch baseline with a LanceDB candidate.
 
 Review and edit the generated fixture before treating it as a quality gate. The benchmark also enforces absolute hit-rate, MRR, and top-one floors, but hand-written intent queries are more representative than card names or taglines.
 

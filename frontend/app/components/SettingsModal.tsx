@@ -1003,6 +1003,53 @@ export const SettingsModal = ({
 
                                 {/* Tab: Vector Search */}
                                 <div className={clsx('space-y-6', activeTab !== 'vector' && 'hidden')}>
+                                    <div className="space-y-4 rounded-2xl border border-slate-200 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-800">
+                                        <div>
+                                            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Search backend</h3>
+                                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">LanceDB is the lightweight embedded default. Meilisearch remains available for very large archives.</p>
+                                        </div>
+                                        <label className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-200">
+                                            <input type="checkbox" name="search_enabled" defaultChecked={config?.search?.enabled ?? config?.meilisearch?.enabled ?? false} className="h-4 w-4 rounded border-slate-300 text-indigo-600" />
+                                            <span className="font-medium">Enable advanced search</span>
+                                        </label>
+                                        <div className="grid gap-4 md:grid-cols-2">
+                                            <label className="flex flex-col gap-2 text-sm">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">Provider</span>
+                                                <select
+                                                    name="search_backend"
+                                                    defaultValue={config?.search?.enabled == null && config?.meilisearch?.enabled
+                                                        ? 'meilisearch'
+                                                        : (config?.search?.backend ?? 'lancedb')}
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+                                                >
+                                                    <option value="lancedb">LanceDB (embedded)</option>
+                                                    <option value="meilisearch">Meilisearch (external)</option>
+                                                </select>
+                                            </label>
+                                            <label className="flex flex-col gap-2 text-sm">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">LanceDB path</span>
+                                                <input name="search_lanceUri" defaultValue={config?.search?.lancedb?.uri ?? ''} placeholder="/state/search.lance" className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+                                            </label>
+                                            <label className="flex flex-col gap-2 text-sm">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">LanceDB table</span>
+                                                <input name="search_lanceTable" defaultValue={config?.search?.lancedb?.tableName ?? 'cards'} className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+                                            </label>
+                                            <label className="flex flex-col gap-2 text-sm">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">Maximum text hits</span>
+                                                <input type="number" min="100" name="search_maxTotalHits" defaultValue={config?.search?.lancedb?.maxTotalHits ?? 10000} className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+                                            </label>
+                                            <input type="hidden" name="search_lanceBatchSize" value={config?.search?.lancedb?.batchSize ?? 2000} />
+                                        </div>
+                                        <details className="text-xs text-slate-500 dark:text-slate-400">
+                                            <summary className="cursor-pointer font-medium">Optional Meilisearch connection</summary>
+                                            <div className="mt-3 grid gap-4 md:grid-cols-2">
+                                                <label className="flex items-center gap-2"><input type="checkbox" name="meili_enabled" defaultChecked={config?.meilisearch?.enabled ?? false} /> Enable Meilisearch</label>
+                                                <input name="meili_host" defaultValue={config?.meilisearch?.host ?? 'http://127.0.0.1:7700'} placeholder="http://meilisearch:7700" className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+                                                <input type="password" name="meili_apiKey" defaultValue={config?.meilisearch?.apiKey ?? ''} placeholder="API key" autoComplete="off" className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+                                                <input name="meili_indexName" defaultValue={config?.meilisearch?.indexName ?? 'cards'} placeholder="cards" className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+                                            </div>
+                                        </details>
+                                    </div>
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-700 dark:bg-slate-800/60">
                                         <div className="flex flex-wrap items-center justify-between gap-3">
                                             <div className="text-slate-600 dark:text-slate-300">
@@ -1039,7 +1086,7 @@ export const SettingsModal = ({
                                     </div>
                                     <div className="space-y-3">
                                         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                            Meilisearch + Embeddings
+                                            Search + Embeddings
                                         </h3>
                                         <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                                             <input
@@ -1084,7 +1131,7 @@ export const SettingsModal = ({
                                                 />
                                             </label>
                                             <label className="flex flex-col gap-2 text-sm">
-                                                <span className="font-medium text-slate-700 dark:text-slate-300">Meili embedder name</span>
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">Embedder name</span>
                                                 <input
                                                     type="text"
                                                     name="vector_embedderName"

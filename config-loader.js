@@ -52,6 +52,17 @@ const defaultMeilisearchConfig = {
     indexName: 'cards'
 };
 
+const defaultSearchConfig = {
+    enabled: null,
+    backend: 'lancedb',
+    lancedb: {
+        uri: '',
+        tableName: 'cards',
+        batchSize: 2000,
+        maxTotalHits: 10000
+    }
+};
+
 const defaultVectorSearchConfig = {
     enabled: false,
     enableChunks: true,
@@ -112,6 +123,7 @@ const defaultConfig = {
     followedCreatorsOnly: false,
     publicBaseUrl: '',
     sillyTavern: defaultSillyTavernConfig,
+    search: defaultSearchConfig,
     meilisearch: defaultMeilisearchConfig,
     vectorSearch: defaultVectorSearchConfig,
     ctSync: defaultCtSyncConfig
@@ -176,6 +188,21 @@ function validateConfig(config) {
         }
     }
 
+    if (config.search?.enabled) {
+        if (!['lancedb', 'meilisearch'].includes(config.search.backend)) {
+            errors.push(`Invalid search backend: ${config.search.backend}`);
+        }
+        if (config.search.backend === 'meilisearch' && config.meilisearch?.enabled !== true) {
+            errors.push('Meilisearch search backend selected but meilisearch.enabled is false');
+        }
+        if (config.search.backend === 'lancedb') {
+            const tableName = config.search.lancedb?.tableName;
+            if (!tableName || !/^[a-zA-Z0-9_-]+$/.test(tableName)) {
+                errors.push('LanceDB tableName must contain only letters, numbers, underscores, or dashes');
+            }
+        }
+    }
+
     // Validate Vector Search config
     if (config.vectorSearch?.enabled) {
         const provider = String(config.vectorSearch.embeddingProvider || 'ollama').toLowerCase();
@@ -235,17 +262,31 @@ function validateConfig(config) {
 }
 
 function mergeConfig(config = {}) {
-    return {
+    const merged = {
         ...defaultConfig,
         ...config,
         sillyTavern: { ...defaultSillyTavernConfig, ...(config.sillyTavern || {}) },
+        search: {
+            ...defaultSearchConfig,
+            ...(config.search || {}),
+            lancedb: { ...defaultSearchConfig.lancedb, ...(config.search?.lancedb || {}) }
+        },
         meilisearch: { ...defaultMeilisearchConfig, ...(config.meilisearch || {}) },
         ctSync: { ...defaultCtSyncConfig, ...(config.ctSync || {}) },
         vectorSearch: { ...defaultVectorSearchConfig, ...(config.vectorSearch || {}) }
     };
+    if (merged.search.enabled == null && merged.meilisearch.enabled === true) {
+        merged.search.backend = 'meilisearch';
+    }
+    return merged;
 }
 
 function applyEnvironmentOverrides(config) {
+    if (process.env.SEARCH_BACKEND) {
+        config.search.enabled = process.env.SEARCH_BACKEND !== 'disabled';
+        if (config.search.enabled) config.search.backend = process.env.SEARCH_BACKEND;
+    }
+    if (process.env.SEARCH_LANCE_PATH) config.search.lancedb.uri = process.env.SEARCH_LANCE_PATH;
     if (process.env.MEILI_HOST) config.meilisearch.host = process.env.MEILI_HOST;
     if (process.env.MEILI_KEY) config.meilisearch.apiKey = process.env.MEILI_KEY;
     if (process.env.EMBEDDING_PROVIDER) config.vectorSearch.embeddingProvider = process.env.EMBEDDING_PROVIDER;
@@ -315,6 +356,15 @@ export function saveConfig(config) {
             ...(config.meilisearch || {})
         };
         config.meilisearch = mergedMeili;
+
+        config.search = {
+            ...defaultSearchConfig,
+            ...(config.search || {}),
+            lancedb: { ...defaultSearchConfig.lancedb, ...(config.search?.lancedb || {}) }
+        };
+        if (config.search.enabled == null && config.meilisearch.enabled === true) {
+            config.search.backend = 'meilisearch';
+        }
 
         const mergedCtSync = {
             ...defaultCtSyncConfig,

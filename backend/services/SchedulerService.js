@@ -2,7 +2,7 @@
 import { loadConfig } from '../../config-loader.js';
 import { syncCards } from './scraper.js';
 import { syncCharacterTavern } from './scrapers/CtScraper.js';
-import { drainSearchIndexQueue, isSearchIndexEnabled } from './search-index.js';
+import { drainSearchIndexQueue, isSearchIndexEnabled } from './SearchService.js';
 import { computeDailySnapshot } from './MetricsService.js';
 import { lockService } from './LockService.js';
 import { scheduleVectorBackfill } from './VectorBackfillService.js';

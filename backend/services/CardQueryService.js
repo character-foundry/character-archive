@@ -20,9 +20,9 @@ import {
 import {
     isSearchIndexEnabled,
     isVectorSearchReady,
-    searchMeilisearchCards,
+    searchLexicalCards,
     searchVectorCards
-} from './search-index.js';
+} from './SearchService.js';
 import { cacheService } from './CacheService.js';
 import { sillyTavernService } from './SillyTavernService.js';
 import { getRemoteCardNames } from './FederationService.js';
@@ -213,7 +213,7 @@ export async function performAdvancedSearch(params) {
     if (!isSearchIndexEnabled()) {
         return {
             fallback: true,
-            fallbackReason: 'Advanced search requires Meilisearch. Falling back to basic search.'
+        fallbackReason: 'Advanced search is not enabled. Falling back to basic search.'
         };
     }
 
@@ -261,7 +261,7 @@ export async function performAdvancedSearch(params) {
                     limit: params.limit,
                     sort: params.sort
                 }),
-                searchMeilisearchCards({
+                searchLexicalCards({
                     text: queryText,
                     filter: meiliFilterExpression,
                     page: params.page,
@@ -318,7 +318,7 @@ export async function performAdvancedSearch(params) {
 
     // Lexical-only search
     try {
-        const meiliResult = await searchMeilisearchCards({
+        const meiliResult = await searchLexicalCards({
             text: queryText,
             filter: meiliFilterExpression,
             page: params.page,

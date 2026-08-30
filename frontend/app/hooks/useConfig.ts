@@ -151,6 +151,31 @@ export function useConfig(): UseConfigResult {
       };
 
       const previousVector = previousConfig.vectorSearch || defaultVectorSearchState;
+      const previousSearch = previousConfig.search || {
+        enabled: false,
+        backend: "lancedb" as const,
+        lancedb: { uri: "", tableName: "cards", batchSize: 2000, maxTotalHits: 10000 },
+      };
+      const searchConfig: NonNullable<Config["search"]> = {
+        ...previousSearch,
+        enabled: data.get("search_enabled") === "on",
+        backend: data.get("search_backend") === "meilisearch" ? "meilisearch" : "lancedb",
+        lancedb: {
+          ...previousSearch.lancedb,
+          uri: getStringValue("search_lanceUri", { trim: true }),
+          tableName: getStringValue("search_lanceTable", { trim: true }) || "cards",
+          batchSize: Math.max(100, parseNumberValue("search_lanceBatchSize", previousSearch.lancedb?.batchSize ?? 2000)),
+          maxTotalHits: Math.max(100, parseNumberValue("search_maxTotalHits", previousSearch.lancedb?.maxTotalHits ?? 10000)),
+        },
+      };
+      const previousMeili = previousConfig.meilisearch || { enabled: false, host: "http://127.0.0.1:7700", apiKey: "", indexName: "cards" };
+      const meilisearchConfig: NonNullable<Config["meilisearch"]> = {
+        ...previousMeili,
+        enabled: data.get("meili_enabled") === "on",
+        host: getStringValue("meili_host", { trim: true }) || previousMeili.host,
+        apiKey: getStringValue("meili_apiKey", { trim: true }),
+        indexName: getStringValue("meili_indexName", { trim: true }) || "cards",
+      };
       const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
       const vectorConfig: NonNullable<Config["vectorSearch"]> = {
         ...previousVector,
@@ -221,6 +246,8 @@ export function useConfig(): UseConfigResult {
         ctSync: ctConfig,
         risuAiSync: risuAiConfig,
         wyvernSync: wyvernConfig,
+        search: searchConfig,
+        meilisearch: meilisearchConfig,
         vectorSearch: vectorConfig,
       };
 

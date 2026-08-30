@@ -3,5 +3,7 @@ packages:
 
 allowBuilds:
   better-sqlite3: true
+  onnxruntime-node: false
+  protobufjs: false
   sharp: true
   sqlite3: true

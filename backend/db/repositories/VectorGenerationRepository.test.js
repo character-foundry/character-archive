@@ -228,3 +228,22 @@ test('active index maintenance is processed before a shadow rebuild', () => {
         db.close();
     }
 });
+
+test('current build can be constrained to the active search provider specification', () => {
+    const { db, vectors } = harness();
+    try {
+        const meili = vectors.reconcile({
+            modelName: 'embed-model', embedderName: 'embedder', dimensions: 3,
+            cardsIndexBase: 'cards', chunksIndexBase: 'chunks', chunksEnabled: true
+        });
+        const lanceSpec = {
+            modelName: 'embed-model', embedderName: 'lance-embedder', dimensions: 3,
+            cardsIndexBase: 'cards', chunksIndexBase: '', chunksEnabled: false
+        };
+        const lance = vectors.reconcile(lanceSpec);
+        assert.equal(vectors.currentBuild(lanceSpec).id, lance.id);
+        assert.notEqual(vectors.currentBuild(lanceSpec).id, meili.id);
+    } finally {
+        db.close();
+    }
+});

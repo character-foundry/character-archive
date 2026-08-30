@@ -2,7 +2,23 @@
 import { MeiliSearch } from 'meilisearch';
 import { loadConfig } from '../config-loader.js';
 import { initDatabase, getDatabase } from '../backend/database.js';
-import { configureSearchIndex, rebuildSearchIndexFromRows } from '../backend/services/search-index.js';
+import {
+    buildSearchDocumentFromRow,
+    configureSearchIndex,
+    rebuildSearchIndexFromDocumentBatches
+} from '../backend/services/search-index.js';
+
+async function* documentBatches(database, batchSize = 1000) {
+    const selectBatch = database.prepare('SELECT * FROM cards WHERE id > ? ORDER BY id LIMIT ?');
+    let lastId = -1;
+    while (true) {
+        const rows = selectBatch.all(lastId, batchSize);
+        if (!rows.length) return;
+        lastId = Number(rows.at(-1).id);
+        const documents = rows.map(buildSearchDocumentFromRow).filter(Boolean);
+        if (documents.length) yield documents;
+    }
+}
 
 async function main() {
     const config = loadConfig();
@@ -33,12 +49,11 @@ async function main() {
 
     await initDatabase();
     const database = getDatabase();
-    const rows = database.prepare('SELECT * FROM cards').all();
-    const documentsCount = rows.length;
-    console.log(`[INFO] Loaded ${documentsCount} cards from SQLite`);
+    const documentsCount = Number(database.prepare('SELECT COUNT(*) AS count FROM cards').get()?.count || 0);
+    console.log(`[INFO] Streaming ${documentsCount} cards from SQLite`);
 
     configureSearchIndex(meili);
-    await rebuildSearchIndexFromRows(rows);
+    await rebuildSearchIndexFromDocumentBatches(documentBatches(database), { expectedDocuments: documentsCount });
 
     console.log('[INFO] Meilisearch sync complete');
     process.exit(0);
