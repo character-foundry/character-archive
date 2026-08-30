@@ -26,6 +26,12 @@ x-app: &app
     - ${ARCHIVE_STATIC_DIR:-./static}:/app/static
     - ${ARCHIVE_DATA_DIR:-./data}:/app/data
     - ${ARCHIVE_BACKUP_DIR:-./backup}:/app/backup
+    - ${ARCHIVE_DATA_DIR:-./data}/blacklist.txt:/app/blacklist.txt
+    - ${ARCHIVE_DATA_DIR:-./data}/ct-blacklist.txt:/app/ct-blacklist.txt
+    - ${ARCHIVE_DATA_DIR:-./data}/risuai-blacklist.txt:/app/risuai-blacklist.txt
+    - ${ARCHIVE_DATA_DIR:-./data}/risuai-cooldown.json:/app/risuai-cooldown.json
+    - ${ARCHIVE_DATA_DIR:-./data}/wyvern-blacklist.txt:/app/wyvern-blacklist.txt
+    - ${ARCHIVE_DATA_DIR:-./data}/wyvern-cooldown.json:/app/wyvern-cooldown.json
   extra_hosts:
     - host.docker.internal:host-gateway
   networks: [archive-net]
