@@ -523,6 +523,23 @@ export class LanceSearchBackend {
         log.info(`LanceDB vector index built (${tableName})`);
     }
 
+    async ensureVectorIndex({ tableName = this.vectorTableName } = {}) {
+        const table = await this.openVectorTable({ tableName });
+        const existing = (await table.listIndices()).find(index => (
+            Array.isArray(index.columns) && index.columns.includes('vector')
+        ));
+        if (!existing) {
+            await this.createVectorIndex({ tableName });
+            return { created: true, optimized: false };
+        }
+        if (Number(existing.numUnindexedRows || 0) > 0) {
+            await table.optimize();
+            log.info(`LanceDB vector index updated (${tableName})`);
+            return { created: false, optimized: true };
+        }
+        return { created: false, optimized: false };
+    }
+
     async close() {
         const table = this.table;
         const vectorTable = this.vectorTable;

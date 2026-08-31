@@ -181,7 +181,7 @@ async function tick() {
                 vectorConfig: { ...config.vectorSearch, enabled: true, embedDimensions: generation.dimensions }
             });
             try {
-                await lance.createVectorIndex({ tableName: generation.cards_index });
+                await lance.ensureVectorIndex({ tableName: generation.cards_index });
             } finally {
                 await lance.close();
             }

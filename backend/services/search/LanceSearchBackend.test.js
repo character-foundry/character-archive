@@ -186,3 +186,22 @@ test('LanceDB vector search uses the same filters and response contract', async 
     assert.deepEqual(new Set(afterDelete.ids), new Set(['2', '3']));
     await backend.close();
 });
+
+test('LanceDB vector index finalization reuses an existing HNSW index', async t => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-finalize-'));
+    t.after(async () => rm(directory, { recursive: true, force: true }));
+    const backend = new LanceSearchBackend({
+        uri: directory,
+        vectorTableName: 'vectors_test',
+        vectorConfig: { enabled: true, embedDimensions: 3 }
+    });
+    await backend.upsertVectorDocuments(Array.from({ length: 5 }, (_, index) => ({
+        document: document({ id: String(index + 1), name: `Card ${index + 1}` }),
+        vector: index % 2 ? [0, 1, 0] : [1, 0, 0],
+        text: `card ${index + 1}`
+    })));
+
+    assert.deepEqual(await backend.ensureVectorIndex(), { created: true, optimized: false });
+    assert.deepEqual(await backend.ensureVectorIndex(), { created: false, optimized: false });
+    await backend.close();
+});
