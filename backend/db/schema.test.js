@@ -139,11 +139,13 @@ test('card changes leave a frozen candidate alone and only queue the active gene
         assert.equal(database.prepare('SELECT COUNT(*) AS count FROM vector_work_items WHERE generation_id = ?').get(candidate.id).count, 0);
 
         database.prepare("UPDATE vector_generations SET active = 1, status = 'active' WHERE id = ?").run(candidate.id);
+        database.prepare('DELETE FROM vector_index_queue').run();
         database.prepare("UPDATE cards SET name = 'changed again' WHERE id = 1").run();
         assert.deepEqual(
             database.prepare('SELECT status, action, revision FROM vector_work_items WHERE generation_id = ? AND card_id = ?').get(candidate.id, '1'),
             { status: 'queued', action: 'upsert', revision: 0 }
         );
+        assert.equal(database.prepare('SELECT COUNT(*) AS count FROM vector_index_queue').get().count, 0);
     } finally {
         database.close();
     }

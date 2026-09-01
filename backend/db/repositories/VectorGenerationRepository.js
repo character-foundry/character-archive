@@ -315,6 +315,7 @@ export function createVectorGenerationRepository(database) {
             const activatedAt = isoNow(now);
             const retireAfter = new Date(new Date(activatedAt).getTime() + 7 * 86400000).toISOString();
             database.transaction(() => {
+                database.prepare('DELETE FROM vector_index_queue').run();
                 database.prepare(`
                     DELETE FROM vector_work_items
                     WHERE status IN ('queued', 'retry', 'leased', 'submitted')

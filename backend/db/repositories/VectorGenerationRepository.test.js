@@ -220,6 +220,7 @@ test('activation requires a ready generation and retires the prior pointer for s
         assert.equal(old.status, 'retired');
         assert.equal(old.retire_after, '2026-09-07T00:00:00.000Z');
         assert.equal(old.queued_items, 0);
+        assert.equal(db.prepare('SELECT COUNT(*) AS count FROM vector_index_queue').get().count, 0);
         assert.equal(vectors.get(second.id).active, true);
     } finally {
         db.close();

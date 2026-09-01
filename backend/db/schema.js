@@ -292,7 +292,9 @@ export function ensureSchema(db) {
         CREATE TRIGGER trg_cards_after_insert_vector_queue
         AFTER INSERT ON cards
         BEGIN
-            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert')
+            INSERT INTO vector_index_queue(cardId, action)
+            SELECT NEW.id, 'upsert'
+            WHERE NOT EXISTS (SELECT 1 FROM vector_generations WHERE active = 1)
             ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
             INSERT INTO vector_work_items (generation_id, card_id, action)
             SELECT id, CAST(NEW.id AS TEXT), 'upsert'
@@ -305,7 +307,9 @@ export function ensureSchema(db) {
         CREATE TRIGGER trg_cards_after_update_vector_queue
         AFTER UPDATE ON cards
         BEGIN
-            INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert')
+            INSERT INTO vector_index_queue(cardId, action)
+            SELECT NEW.id, 'upsert'
+            WHERE NOT EXISTS (SELECT 1 FROM vector_generations WHERE active = 1)
             ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
             INSERT INTO vector_work_items (generation_id, card_id, action)
             SELECT id, CAST(NEW.id AS TEXT), 'upsert'
@@ -318,7 +322,9 @@ export function ensureSchema(db) {
         CREATE TRIGGER trg_cards_after_delete_vector_queue
         AFTER DELETE ON cards
         BEGIN
-            INSERT INTO vector_index_queue(cardId, action) VALUES (OLD.id, 'delete')
+            INSERT INTO vector_index_queue(cardId, action)
+            SELECT OLD.id, 'delete'
+            WHERE NOT EXISTS (SELECT 1 FROM vector_generations WHERE active = 1)
             ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
             INSERT INTO vector_work_items (generation_id, card_id, action)
             SELECT id, CAST(OLD.id AS TEXT), 'delete'
