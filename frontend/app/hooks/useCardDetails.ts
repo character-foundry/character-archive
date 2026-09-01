@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import {
   fetchCardMetadata,
   fetchCardGallery,
@@ -66,6 +66,7 @@ export function useCardDetails(
   const [cachedAssetsLoading, setCachedAssetsLoading] = useState(false);
   const [assetCacheStatus, setAssetCacheStatus] = useState<{ cached: boolean; count: number } | null>(null);
   const [assetCacheMessage, setAssetCacheMessage] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const openRequestRef = useRef<{ cardId: string; promise: Promise<void> } | null>(null);
 
   // Clear gallery message when card closes
   useEffect(() => {
@@ -119,14 +120,20 @@ export function useCardDetails(
   }, [selectedCard]);
 
   const openCardDetails = useCallback(async (card: Card, updateURL?: (cardId: string) => void) => {
+    const cardId = card.id.toString();
+    if (openRequestRef.current?.cardId === cardId) {
+      await openRequestRef.current.promise;
+      return;
+    }
     setSelectedCard(card);
-    updateURL?.(card.id.toString());
+    updateURL?.(cardId);
     setDetailsLoading(true);
     const shouldFetchGallery = card.favorited === 1 || card.hasGallery;
     setGalleryLoading(shouldFetchGallery);
     setGalleryMessage(null);
 
-    try {
+    const request = (async () => {
+      try {
       const [metadata, galleryResult] = await Promise.all([
         fetchCardMetadata(card.id).catch(() => null),
         shouldFetchGallery
@@ -187,12 +194,21 @@ export function useCardDetails(
         gallery: galleryAssets,
         galleryError,
       });
-    } catch (err) {
-      console.error(err);
-      setCardDetails({ metadata: null, pngInfo: null, gallery: [], galleryError: null });
+      } catch (err) {
+        console.error(err);
+        setCardDetails({ metadata: null, pngInfo: null, gallery: [], galleryError: null });
+      } finally {
+        setDetailsLoading(false);
+        setGalleryLoading(false);
+      }
+    })();
+    openRequestRef.current = { cardId, promise: request };
+    try {
+      await request;
     } finally {
-      setDetailsLoading(false);
-      setGalleryLoading(false);
+      if (openRequestRef.current?.promise === request) {
+        openRequestRef.current = null;
+      }
     }
   }, [setCards]);
 

@@ -155,8 +155,18 @@ function HomeContent() {
 
   const urlCardId = getCardIdFromURL();
   const lastUrlCardIdRef = useRef<string | null>(null);
+  const openingCardIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const result = resolveUrlCard(urlCardId, cards, lastUrlCardIdRef.current, selectedCard?.id ?? null);
+    if (urlCardId && urlCardId === openingCardIdRef.current) {
+      openingCardIdRef.current = null;
+    }
+    const result = resolveUrlCard(
+      urlCardId,
+      cards,
+      lastUrlCardIdRef.current,
+      selectedCard?.id ?? null,
+      openingCardIdRef.current
+    );
     if (result.action === "clear") {
       lastUrlCardIdRef.current = result.nextLast;
       setSelectedCard(null);
@@ -199,6 +209,7 @@ function HomeContent() {
   }, [filters, setFilters, setSearchInputValue, setAdvancedFilterInput, setPage, clearSelection, setSelectedCard, updateURL]);
 
   const handleCloseCard = useCallback(() => {
+    openingCardIdRef.current = null;
     closeCardDetails(() => updateURL(filters, page, null));
     if (pushStatus && pushStatus.cardId === selectedCard?.id) {
       setPushStatus(null);
@@ -206,7 +217,9 @@ function HomeContent() {
   }, [closeCardDetails, updateURL, filters, page, selectedCard?.id, setPushStatus, pushStatus]);
 
   const handleOpenCard = useCallback(async (card: Card) => {
-    lastUrlCardIdRef.current = card.id.toString();
+    const cardId = card.id.toString();
+    openingCardIdRef.current = cardId;
+    lastUrlCardIdRef.current = cardId;
     await openCardDetails(card, (cardId) => updateURL(filters, page, cardId, true));
   }, [openCardDetails, updateURL, filters, page]);
 
