@@ -248,6 +248,29 @@ test('activation rolls back the database pointer when config persistence fails',
     }
 });
 
+test('activation retires and drops pending work from every older generation', () => {
+    const { db, vectors } = harness();
+    try {
+        const abandoned = vectors.reconcile({
+            modelName: 'old-model', embedderName: 'old-embedder', dimensions: 8,
+            cardsIndexBase: 'old-cards', chunksIndexBase: 'old-chunks'
+        });
+        const candidate = vectors.reconcile({
+            modelName: 'new-model', embedderName: 'new-embedder', dimensions: 4,
+            cardsIndexBase: 'new-cards', chunksIndexBase: 'new-chunks'
+        });
+        db.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(candidate.id);
+
+        vectors.activate(candidate.id, { qualityApproved: true });
+
+        assert.equal(vectors.get(abandoned.id).status, 'retired');
+        assert.equal(vectors.get(abandoned.id).queued_items, 0);
+        assert.equal(vectors.get(candidate.id).active, true);
+    } finally {
+        db.close();
+    }
+});
+
 test('a failed generation resumes only its dead work with the same model specification', () => {
     const { db, vectors } = harness();
     try {

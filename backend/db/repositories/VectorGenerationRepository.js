@@ -321,24 +321,25 @@ export function createVectorGenerationRepository(database) {
                       AND generation_id IN (
                           SELECT id FROM vector_generations
                           WHERE id <> ? AND (
-                              active = 1 OR (
+                              active = 1 OR status = 'retired' OR id < ? OR (
                                   model_name = ? AND embedder_name = ? AND dimensions = ?
                                   AND status IN ('building', 'ready')
                               )
                           )
                       )
-                `).run(id, generation.model_name, generation.embedder_name, generation.dimensions);
+                `).run(id, id, generation.model_name, generation.embedder_name, generation.dimensions);
                 database.prepare(`
                     UPDATE vector_generations
                     SET active = 0, status = 'retired', retire_after = ?
                     WHERE id <> ? AND (
-                        active = 1 OR (
+                        active = 1 OR status = 'retired' OR id < ? OR (
                             model_name = ? AND embedder_name = ? AND dimensions = ?
                             AND status IN ('building', 'ready')
                         )
                     )
                 `).run(
                     retireAfter,
+                    id,
                     id,
                     generation.model_name,
                     generation.embedder_name,
