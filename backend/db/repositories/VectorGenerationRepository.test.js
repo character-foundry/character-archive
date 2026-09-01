@@ -113,6 +113,38 @@ test('work leases retry and only complete after the worker reports success', () 
     }
 });
 
+test('a bounded drain never claims work created after its starting boundary', () => {
+    const { db, vectors } = harness();
+    try {
+        const generation = vectors.reconcile({
+            modelName: 'model', embedderName: 'embedder', dimensions: 8,
+            cardsIndexBase: 'cards', chunksIndexBase: 'chunks'
+        });
+        const boundary = db.prepare('SELECT MAX(id) AS id FROM vector_work_items WHERE generation_id = ?')
+            .get(generation.id).id;
+        db.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(generation.id);
+        vectors.activate(generation.id, { qualityApproved: true });
+        db.prepare("INSERT INTO cards (id, name) VALUES (4, 'four')").run();
+
+        const claimed = vectors.claimBatch({
+            generationId: generation.id,
+            workerId: 'bounded-worker',
+            limit: 10,
+            maxWorkItemId: boundary
+        });
+
+        assert.equal(claimed.length, 3);
+        assert.ok(claimed.every(item => item.id <= boundary));
+        assert.equal(
+            db.prepare("SELECT COUNT(*) AS count FROM vector_work_items WHERE generation_id = ? AND id > ? AND status = 'queued'")
+                .get(generation.id, boundary).count,
+            1
+        );
+    } finally {
+        db.close();
+    }
+});
+
 test('worker shutdown releases a lease immediately without consuming an attempt', () => {
     const { db, vectors } = harness();
     try {
@@ -173,17 +205,21 @@ test('activation requires a ready generation and retires the prior pointer for s
     const { db, vectors } = harness();
     try {
         const first = vectors.reconcile({ modelName: 'm1', embedderName: 'e1', dimensions: 8, cardsIndexBase: 'cards', chunksIndexBase: 'chunks' });
+        db.prepare("UPDATE vector_work_items SET status = 'completed' WHERE generation_id = ?").run(first.id);
         db.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(first.id);
         vectors.activate(first.id, { qualityApproved: true, now: '2026-08-30T00:00:00.000Z' });
 
         const second = vectors.reconcile({ modelName: 'm2', embedderName: 'e2', dimensions: 4, cardsIndexBase: 'cards', chunksIndexBase: 'chunks' });
         db.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(second.id);
+        db.prepare("UPDATE cards SET name = 'changed while first generation was active' WHERE id = 1").run();
+        assert.equal(vectors.get(first.id).queued_items, 1);
         assert.throws(() => vectors.activate(second.id), /quality approval/);
         vectors.activate(second.id, { qualityApproved: true, now: '2026-08-31T00:00:00.000Z' });
 
         const old = vectors.get(first.id);
         assert.equal(old.status, 'retired');
         assert.equal(old.retire_after, '2026-09-07T00:00:00.000Z');
+        assert.equal(old.queued_items, 0);
         assert.equal(vectors.get(second.id).active, true);
     } finally {
         db.close();

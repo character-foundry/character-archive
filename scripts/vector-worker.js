@@ -24,8 +24,17 @@ const configuredOptimizeInterval = Number(process.env.VECTOR_LANCE_OPTIMIZE_EVER
 const lanceOptimizeEveryBatches = Number.isFinite(configuredOptimizeInterval)
     ? Math.max(0, Math.floor(configuredOptimizeInterval))
     : 20;
+function arg(name) {
+    const index = process.argv.indexOf(name);
+    return index >= 0 ? process.argv[index + 1] : null;
+}
 const runOnce = process.argv.includes('--once');
 const drainMode = process.argv.includes('--drain');
+const requestedGenerationValue = arg('--generation') || process.env.VECTOR_DRAIN_GENERATION_ID || '';
+const requestedGenerationId = requestedGenerationValue ? Number(requestedGenerationValue) : null;
+if (requestedGenerationValue && (!Number.isInteger(requestedGenerationId) || requestedGenerationId <= 0)) {
+    throw new Error('--generation must be a positive integer generation ID');
+}
 const drainStartedAt = Date.now();
 const drainMaxMinutes = Math.max(1, Number(process.env.VECTOR_DRAIN_MAX_MINUTES) || 360);
 let consecutiveFailures = 0;
@@ -34,6 +43,7 @@ let lanceBatchesSinceOptimize = 0;
 let stopping = false;
 let activeChild = null;
 let forceKillTimer = null;
+let drainTarget = null;
 
 initDatabase({ skipTagRebuild: true, skipTokenBackfill: true });
 const database = getDatabase();
@@ -73,6 +83,55 @@ function failedGeneration(spec) {
     return generations.list().find(generation => (
         generation.status === 'failed' && matchesSpec(generation, spec)
     )) || null;
+}
+
+function snapshotDrainTarget(generation) {
+    if (!drainMode || drainTarget || !generation) return;
+    const maxWorkItemId = Number(database.prepare(`
+        SELECT COALESCE(MAX(id), 0) AS id
+        FROM vector_work_items
+        WHERE generation_id = ?
+    `).get(generation.id).id);
+    drainTarget = { generationId: generation.id, maxWorkItemId };
+    log.info(`Finite drain locked to generation ${generation.id} through work item ${maxWorkItemId}`);
+}
+
+function boundedDrainGeneration() {
+    if (!drainTarget) return null;
+    const generation = generations.get(drainTarget.generationId);
+    if (!generation) return null;
+    const counts = database.prepare(`
+        SELECT
+            SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_items,
+            SUM(CASE WHEN status = 'retry' THEN 1 ELSE 0 END) AS retry_items,
+            SUM(CASE WHEN status IN ('leased', 'submitted') THEN 1 ELSE 0 END) AS running_items,
+            SUM(CASE WHEN status = 'dead' THEN 1 ELSE 0 END) AS dead_items
+        FROM vector_work_items
+        WHERE generation_id = ? AND id <= ?
+    `).get(drainTarget.generationId, drainTarget.maxWorkItemId);
+    return {
+        ...generation,
+        ...Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value || 0)]))
+    };
+}
+
+function selectGeneration(spec) {
+    if (drainTarget) return generations.get(drainTarget.generationId);
+    let generation = requestedGenerationId
+        ? generations.get(requestedGenerationId)
+        : generations.currentBuild(spec);
+    if (generation && !matchesSpec(generation, spec)) {
+        throw new Error(`Vector generation ${generation.id} does not match the configured search provider`);
+    }
+    if (!generation && !requestedGenerationId && process.env.VECTOR_AUTO_RECONCILE !== '0' && !failedGeneration(spec)) {
+        generations.reconcile(spec);
+        generation = generations.currentBuild(spec);
+    }
+    if (requestedGenerationId && !generation) {
+        throw new Error(`Vector generation ${requestedGenerationId} was not found`);
+    }
+    snapshotDrainTarget(generation);
+    return generation;
 }
 
 async function meiliBacklog(config) {
@@ -164,11 +223,7 @@ async function tick() {
     if (config.vectorSearch?.enabled !== true || provider === 'disabled') return false;
     if (provider === 'meilisearch' && config.meilisearch?.enabled !== true) return false;
     const spec = specFromConfig(config);
-    let generation = generations.currentBuild(spec);
-    if (!generation && process.env.VECTOR_AUTO_RECONCILE !== '0' && !failedGeneration(spec)) {
-        generations.reconcile(spec);
-        generation = generations.currentBuild(spec);
-    }
+    const generation = selectGeneration(spec);
     if (!generation) return false;
 
     if (shouldPauseForArchiveSync({ provider, setting: process.env.VECTOR_PAUSE_DURING_SYNC })) {
@@ -188,14 +243,23 @@ async function tick() {
     if (Date.now() < circuitOpenUntil) return false;
     if (stopping) return false;
 
-    const items = generations.claimBatch({ generationId: generation.id, workerId, limit: batchSize, leaseSeconds: 900 });
+    const items = generations.claimBatch({
+        generationId: generation.id,
+        workerId,
+        limit: batchSize,
+        leaseSeconds: 900,
+        maxWorkItemId: drainTarget?.maxWorkItemId
+    });
     if (!items.length) {
         generations.refreshProgress(generation.id);
         return false;
     }
     try {
         await runEtl(items, generation, config);
-        const pendingBeforeClaim = generation.queued_items + generation.retry_items + generation.running_items;
+        const currentGeneration = drainMode ? boundedDrainGeneration() : generation;
+        const pendingBeforeClaim = currentGeneration.queued_items
+            + currentGeneration.retry_items
+            + currentGeneration.running_items;
         if (provider === 'lancedb' && pendingBeforeClaim <= items.length && generation.dead_items === 0) {
             const lance = new LanceSearchBackend({
                 uri: process.env.SEARCH_LANCE_PATH || config.search?.lancedb?.uri,
@@ -265,7 +329,9 @@ async function main() {
         if (stopping) break;
         const config = loadConfig();
         const spec = config.vectorSearch?.enabled === true ? specFromConfig(config) : null;
-        const generation = spec ? (generations.currentBuild(spec) || failedGeneration(spec)) : null;
+        const generation = drainMode && drainTarget
+            ? boundedDrainGeneration()
+            : (spec ? (generations.currentBuild(spec) || failedGeneration(spec)) : null);
         const decision = drainDecision({
             enabled: drainMode,
             worked,

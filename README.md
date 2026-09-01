@@ -265,7 +265,7 @@ To ensure your archive is truly offline:
     ```
     Set `embeddingProvider` to `ollama` or `openai`, and set `embeddingUrl`, `embeddingApiKey`, and `embedModel` for that endpoint. Instruction-aware retrieval models can set `queryInstruction`; it is applied to searches only, never to indexed card documents. `ollamaUrl` remains supported for older configs.
 
-    *This creates or resumes a provider-aware snapshot with a fixed card count, so downloads that arrive during the build cannot move its finish line. The worker uses one embedding request at a time by default, exits when the snapshot is complete, and has a six-hour default safety deadline (`VECTOR_DRAIN_MAX_MINUTES`). LanceDB batches whole-card embeddings and builds a compressed HNSW-SQ index before completion. Search continues using the active generation while the shadow builds.*
+    *This creates or resumes a provider-aware snapshot with a fixed card count, so downloads that arrive during the build cannot move its finish line. Drain mode locks to one generation and its starting work-item boundary; later downloads are left for a later bounded run instead of extending the current run. Use `--generation ID` to target a specific generation. The worker uses one embedding request at a time by default, exits when the boundary is complete, and has a six-hour default safety deadline (`VECTOR_DRAIN_MAX_MINUTES`). LanceDB batches whole-card embeddings and builds a compressed HNSW-SQ index before completion. Search continues using the active generation while the shadow builds.*
     The legacy `pnpm vector:backfill` command remains available for targeted repair, but it is not the normal full-rebuild path.
 6.  If you only want to remove chunk vectors while keeping whole-card vectors, run:
     ```bash

@@ -177,9 +177,15 @@ export function createVectorGenerationRepository(database) {
             return hydrate(database, row);
         },
 
-        claimBatch({ generationId, workerId, limit = 100, leaseSeconds = 300, now } = {}) {
+        claimBatch({ generationId, workerId, limit = 100, leaseSeconds = 300, maxWorkItemId = null, now } = {}) {
             const claimedAt = isoNow(now);
             const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 250));
+            const boundary = maxWorkItemId !== null
+                && typeof maxWorkItemId !== 'undefined'
+                && Number.isInteger(Number(maxWorkItemId))
+                && Number(maxWorkItemId) >= 0
+                ? Number(maxWorkItemId)
+                : null;
             const transaction = database.transaction(() => {
                 database.prepare(`
                     UPDATE vector_work_items
@@ -196,8 +202,9 @@ export function createVectorGenerationRepository(database) {
                           OR generation.snapshot_work_item_max_id IS NULL
                           OR work.id <= generation.snapshot_work_item_max_id
                       )
+                      AND (? IS NULL OR work.id <= ?)
                     ORDER BY work.id ASC LIMIT ?
-                `).all(generationId, claimedAt, safeLimit);
+                `).all(generationId, claimedAt, boundary, boundary, safeLimit);
                 if (!rows.length) return [];
                 const ids = rows.map(row => row.id);
                 const placeholders = ids.map(() => '?').join(',');
@@ -309,10 +316,34 @@ export function createVectorGenerationRepository(database) {
             const retireAfter = new Date(new Date(activatedAt).getTime() + 7 * 86400000).toISOString();
             database.transaction(() => {
                 database.prepare(`
+                    DELETE FROM vector_work_items
+                    WHERE status IN ('queued', 'retry', 'leased', 'submitted')
+                      AND generation_id IN (
+                          SELECT id FROM vector_generations
+                          WHERE id <> ? AND (
+                              active = 1 OR (
+                                  model_name = ? AND embedder_name = ? AND dimensions = ?
+                                  AND status IN ('building', 'ready')
+                              )
+                          )
+                      )
+                `).run(id, generation.model_name, generation.embedder_name, generation.dimensions);
+                database.prepare(`
                     UPDATE vector_generations
                     SET active = 0, status = 'retired', retire_after = ?
-                    WHERE active = 1 AND id <> ?
-                `).run(retireAfter, id);
+                    WHERE id <> ? AND (
+                        active = 1 OR (
+                            model_name = ? AND embedder_name = ? AND dimensions = ?
+                            AND status IN ('building', 'ready')
+                        )
+                    )
+                `).run(
+                    retireAfter,
+                    id,
+                    generation.model_name,
+                    generation.embedder_name,
+                    generation.dimensions
+                );
                 database.prepare(`
                     UPDATE vector_generations
                     SET active = 1, status = 'active', activated_at = ?, quality_report = ?
