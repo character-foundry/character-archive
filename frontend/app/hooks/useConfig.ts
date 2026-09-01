@@ -195,6 +195,7 @@ export function useConfig(): UseConfigResult {
         embeddingProvider: data.get("vector_embeddingProvider") === "openai" ? "openai" : "ollama",
         embeddingUrl: getStringValue("vector_embeddingUrl", { trim: true }),
         embeddingApiKey: getStringValue("vector_embeddingApiKey", { trim: true }),
+        queryInstruction: getStringValue("vector_queryInstruction", { trim: true }),
         ollamaUrl: getStringValue("vector_ollamaUrl", { trim: true }) || previousVector.ollamaUrl,
         semanticRatio: clamp(
           parseFloatValue("vector_semanticRatio", previousVector.semanticRatio ?? defaultVectorSearchState.semanticRatio),

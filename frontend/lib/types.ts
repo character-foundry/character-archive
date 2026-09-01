@@ -168,6 +168,7 @@ export interface Config {
     embeddingProvider?: 'ollama' | 'openai';
     embeddingUrl?: string;
     embeddingApiKey?: string;
+    queryInstruction?: string;
     ollamaUrl: string;
     semanticRatio?: number;
     cardsMultiplier?: number;

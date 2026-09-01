@@ -46,6 +46,7 @@ export const defaultVectorSearchState = {
     embeddingProvider: 'ollama',
     embeddingUrl: '',
     embeddingApiKey: '',
+    queryInstruction: '',
     ollamaUrl: 'http://127.0.0.1:11434',
     semanticRatio: 0.4,
     cardsMultiplier: 2,

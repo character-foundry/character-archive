@@ -128,6 +128,7 @@ The application relies on a `config.json` file. The tracked loader creates it au
             "embeddingProvider": "ollama",
             "embeddingUrl": "http://127.0.0.1:11434",
             "embeddingApiKey": "",
+            "queryInstruction": "",
             "embedModel": "snowflake-arctic-embed2:latest"
         }
         ```
@@ -262,7 +263,7 @@ To ensure your archive is truly offline:
       -H 'content-type: application/json' -d '{}'
     pnpm worker:vector
     ```
-    Set `embeddingProvider` to `ollama` or `openai`, and set `embeddingUrl`, `embeddingApiKey`, and `embedModel` for that endpoint. `ollamaUrl` remains supported for older configs.
+    Set `embeddingProvider` to `ollama` or `openai`, and set `embeddingUrl`, `embeddingApiKey`, and `embedModel` for that endpoint. Instruction-aware retrieval models can set `queryInstruction`; it is applied to searches only, never to indexed card documents. `ollamaUrl` remains supported for older configs.
 
     *This creates or resumes a provider-aware snapshot with a fixed card count, so downloads that arrive during the build cannot move its finish line. The worker uses one embedding request at a time by default, exits when the snapshot is complete, and has a six-hour default safety deadline (`VECTOR_DRAIN_MAX_MINUTES`). LanceDB batches whole-card embeddings and builds a compressed HNSW-SQ index before completion. Search continues using the active generation while the shadow builds.*
     The legacy `pnpm vector:backfill` command remains available for targeted repair, but it is not the normal full-rebuild path.

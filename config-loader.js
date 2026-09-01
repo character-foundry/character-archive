@@ -75,6 +75,7 @@ const defaultVectorSearchConfig = {
     embeddingProvider: 'ollama',
     embeddingUrl: '',
     embeddingApiKey: '',
+    queryInstruction: '',
     ollamaUrl: 'http://127.0.0.1:11434',
     semanticRatio: 0.4,
     cardsMultiplier: 2,
@@ -292,6 +293,7 @@ function applyEnvironmentOverrides(config) {
     if (process.env.EMBEDDING_PROVIDER) config.vectorSearch.embeddingProvider = process.env.EMBEDDING_PROVIDER;
     if (process.env.EMBEDDING_URL) config.vectorSearch.embeddingUrl = process.env.EMBEDDING_URL;
     if (process.env.EMBEDDING_API_KEY) config.vectorSearch.embeddingApiKey = process.env.EMBEDDING_API_KEY;
+    if (process.env.EMBEDDING_QUERY_INSTRUCTION) config.vectorSearch.queryInstruction = process.env.EMBEDDING_QUERY_INSTRUCTION;
     return config;
 }
 

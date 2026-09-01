@@ -1,7 +1,7 @@
 import { MeiliSearch } from 'meilisearch';
 import { getDatabase } from '../database.js';
 import { logger } from '../utils/logger.js';
-import { requestEmbeddings } from './EmbeddingClient.js';
+import { formatEmbeddingQuery, requestEmbeddings } from './EmbeddingClient.js';
 
 const log = logger.scoped('SEARCH');
 
@@ -1104,7 +1104,7 @@ async function fetchQueryEmbedding(text) {
             baseUrl: vectorSearchConfig.embeddingUrl || vectorSearchConfig.ollamaUrl,
             apiKey: vectorSearchConfig.embeddingApiKey,
             model: vectorSearchConfig.embedModel,
-            texts: [trimmed],
+            texts: [formatEmbeddingQuery(trimmed, vectorSearchConfig.queryInstruction)],
             dimensions: vectorSearchConfig.embedDimensions,
             normalize: true
         });

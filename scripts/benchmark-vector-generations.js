@@ -25,6 +25,7 @@ const baselineId = Number(arg('--baseline'));
 const candidateId = Number(arg('--candidate'));
 const fixturePath = path.resolve(arg('--fixture') || 'benchmarks/vector-search-queries.json');
 const outputPath = path.resolve(arg('--output') || `benchmarks/vector-report-${Date.now()}.json`);
+const includeResults = process.argv.includes('--include-results');
 if (!candidateId) throw new Error('Usage: --candidate ID [--baseline ID] [--fixture FILE] [--output FILE]');
 
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
@@ -130,6 +131,13 @@ if (baselineResult) {
 }
 
 const { passed, thresholds } = evaluateVectorBenchmark({ baseline: baselineResult, candidate: candidateResult, overlap10 });
+const results = includeResults ? fixture.map((item, index) => ({
+    query: item.query,
+    note: item.note,
+    expectedIds: item.expectedIds.map(String),
+    candidateIds: candidateResult.results[index],
+    rank: candidateResult.results[index].findIndex(id => item.expectedIds.map(String).includes(id)) + 1
+})) : undefined;
 if (baselineResult) delete baselineResult.results;
 delete candidateResult.results;
 const report = {
@@ -140,7 +148,8 @@ const report = {
     thresholds,
     overlap10,
     baseline: baselineResult,
-    candidate: candidateResult
+    candidate: candidateResult,
+    ...(results ? { results } : {})
 };
 writeJsonAtomically(outputPath, report);
 process.stdout.write(`${JSON.stringify({ outputPath, ...report }, null, 2)}\n`);

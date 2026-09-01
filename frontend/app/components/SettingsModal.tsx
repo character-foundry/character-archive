@@ -72,6 +72,7 @@ type SettingsModalProps = {
         embeddingProvider: string;
         embeddingUrl: string;
         embeddingApiKey: string;
+        queryInstruction: string;
         ollamaUrl: string;
         semanticRatio: number;
         cardsMultiplier: number;
@@ -1167,6 +1168,16 @@ export const SettingsModal = ({
                                                     name="vector_embeddingApiKey"
                                                     defaultValue={config?.vectorSearch?.embeddingApiKey ?? defaultVectorSearchState.embeddingApiKey}
                                                     autoComplete="off"
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                                />
+                                            </label>
+                                            <label className="flex flex-col gap-2 text-sm md:col-span-2">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">Embedding query instruction</span>
+                                                <input
+                                                    type="text"
+                                                    name="vector_queryInstruction"
+                                                    defaultValue={config?.vectorSearch?.queryInstruction ?? defaultVectorSearchState.queryInstruction}
+                                                    placeholder="Leave blank for models that do not use query instructions"
                                                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                                                 />
                                             </label>

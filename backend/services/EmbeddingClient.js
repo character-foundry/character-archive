@@ -6,6 +6,12 @@ function normalizeBaseUrl(baseUrl) {
     return String(baseUrl || '').trim().replace(/\/+$/, '');
 }
 
+export function formatEmbeddingQuery(text, instruction = '') {
+    const query = String(text || '').trim();
+    const task = String(instruction || '').trim();
+    return task ? `Instruct: ${task}\nQuery:${query}` : query;
+}
+
 function buildEndpoint(provider, baseUrl, path) {
     const normalizedProvider = normalizeProvider(provider);
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);

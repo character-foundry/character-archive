@@ -5,7 +5,7 @@ import * as lancedb from '@lancedb/lancedb';
 import { Bool, Field, FixedSizeList, Float32, Float64, List, Schema, Utf8 } from 'apache-arrow';
 
 import { logger } from '../../utils/logger.js';
-import { requestEmbeddings } from '../EmbeddingClient.js';
+import { formatEmbeddingQuery, requestEmbeddings } from '../EmbeddingClient.js';
 import { evaluateBooleanQuery, parseBooleanQuery } from './boolean-query.js';
 import { compileLanceFilter } from './lance-filter.js';
 
@@ -443,13 +443,14 @@ export class LanceSearchBackend {
         if (!this.vectorConfigured) throw new Error('LanceDB vector search is not configured');
         const queryText = cleanString(text).trim();
         if (!queryText) throw new Error('Vector search requires a query string');
+        const embeddingText = formatEmbeddingQuery(queryText, this.vectorConfig.queryInstruction);
         const dimensions = Number(this.vectorConfig.embedDimensions);
         const vectors = await this.embeddingRequest({
             provider: this.vectorConfig.embeddingProvider || 'ollama',
             baseUrl: this.vectorConfig.embeddingUrl || this.vectorConfig.ollamaUrl,
             apiKey: this.vectorConfig.embeddingApiKey || '',
             model: this.vectorConfig.embedModel,
-            texts: [queryText],
+            texts: [embeddingText],
             dimensions,
             normalize: true
         });

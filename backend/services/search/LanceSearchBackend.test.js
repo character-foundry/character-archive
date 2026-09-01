@@ -198,6 +198,7 @@ test('LanceDB rebuild swaps an indexed shadow table only after the build succeed
 test('LanceDB vector search uses the same filters and response contract', async t => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-vector-'));
     t.after(async () => rm(directory, { recursive: true, force: true }));
+    const embeddedTexts = [];
     const backend = new LanceSearchBackend({
         uri: directory,
         tableName: 'cards_test',
@@ -207,9 +208,13 @@ test('LanceDB vector search uses the same filters and response contract', async 
             embedModel: 'test-model',
             embedDimensions: 3,
             embeddingProvider: 'openai',
-            embeddingUrl: 'http://unused'
+            embeddingUrl: 'http://unused',
+            queryInstruction: 'Retrieve character cards matching the requested character, scenario, traits, or premise'
         },
-        embeddingRequest: async () => [[1, 0, 0]]
+        embeddingRequest: async ({ texts }) => {
+            embeddedTexts.push(...texts);
+            return [[1, 0, 0]];
+        }
     });
     await backend.upsertVectorDocuments([
         { document: document({ id: '1', name: 'Fire Mage', source: 'ct', tags: ['fantasy'] }), vector: [1, 0, 0], text: 'fire mage' },
@@ -237,6 +242,10 @@ test('LanceDB vector search uses the same filters and response contract', async 
     assert.equal(result.chunkMatches['1'].text, 'fire mage');
     assert.ok(result.scores['1'] > result.scores['3']);
     assert.equal(result.meta.provider, 'lancedb');
+    assert.equal(
+        embeddedTexts[0],
+        'Instruct: Retrieve character cards matching the requested character, scenario, traits, or premise\nQuery:magic'
+    );
 
     await backend.deleteVectorDocuments(['1']);
     const afterDelete = await backend.searchVector({ text: 'magic', limit: 10 });

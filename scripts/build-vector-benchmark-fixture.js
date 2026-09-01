@@ -20,7 +20,10 @@ for (const source of sources) {
         LIMIT 30
     `).all(source);
     rows.forEach(row => fixture.push({
-        query: row.tagline?.trim() || row.name.trim(),
+        query: [
+            `Character: ${row.name.trim()}`,
+            row.tagline?.trim() ? `Premise: ${row.tagline.trim()}` : ''
+        ].filter(Boolean).join('\n'),
         expectedIds: [String(row.id)],
         source,
         note: row.name
