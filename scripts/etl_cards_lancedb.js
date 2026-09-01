@@ -18,7 +18,7 @@ const embeddingUrl = process.env.EMBEDDING_URL || vectorConfig.embeddingUrl || v
 const embeddingApiKey = process.env.EMBEDDING_API_KEY || vectorConfig.embeddingApiKey || '';
 const embedModel = process.env.EMBED_MODEL || vectorConfig.embedModel;
 const batchSize = Math.max(1, Math.min(Number(process.env.EMBEDDING_BATCH_SIZE || vectorConfig.embedBatchSize) || 32, 128));
-const embeddingConcurrency = Math.max(1, Math.min(Number(process.env.EMBEDDING_CONCURRENCY) || 1, 8));
+const embeddingConcurrency = 1;
 const tokenBudget = Math.max(512, Number(process.env.EMBEDDING_TOKEN_BUDGET) || 24000);
 
 function parseIds(value) {

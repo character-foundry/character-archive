@@ -107,8 +107,10 @@ services:
 
   vector-worker:
     <<: *app
+    profiles: [vector]
     container_name: character-vector-worker
-    command: ["node", "scripts/vector-worker.js"]
+    command: ["node", "scripts/vector-worker.js", "--drain"]
+    restart: "no"
     environment:
       <<: *app-environment
       VECTOR_WORKER_BATCH_SIZE: ${VECTOR_WORKER_BATCH_SIZE:-100}
@@ -116,16 +118,14 @@ services:
       VECTOR_LANCE_OPTIMIZE_EVERY_BATCHES: ${VECTOR_LANCE_OPTIMIZE_EVERY_BATCHES:-20}
       VECTOR_MAX_MEILI_TASK_BACKLOG: ${VECTOR_MAX_MEILI_TASK_BACKLOG:-200}
       VECTOR_PAUSE_DURING_SYNC: ${VECTOR_PAUSE_DURING_SYNC:-}
+      VECTOR_DRAIN_MAX_MINUTES: ${VECTOR_DRAIN_MAX_MINUTES:-360}
     depends_on:
       api:
         condition: service_healthy
     mem_limit: 8g
     memswap_limit: 8g
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      disable: true
 
   meilisearch:
     profiles: [meilisearch]

@@ -28,7 +28,46 @@ test('reconcile creates a shadow generation and seeds every card exactly once', 
         assert.equal(repeated.id, generation.id);
         assert.match(generation.cards_index, /^cards_vsem_g\d+$/);
         assert.equal(generation.expected_cards, 3);
+        assert.equal(generation.snapshot_work_item_max_id, 3);
         assert.equal(db.prepare('SELECT COUNT(*) AS count FROM vector_work_items').get().count, 3);
+    } finally {
+        db.close();
+    }
+});
+
+test('a candidate snapshot does not chase cards changed after reconcile', () => {
+    const { db, vectors } = harness();
+    try {
+        const generation = vectors.reconcile({
+            modelName: 'model', embedderName: 'embedder', dimensions: 8,
+            cardsIndexBase: 'cards', chunksIndexBase: 'chunks'
+        });
+        db.prepare("INSERT INTO cards (id, name) VALUES (4, 'four')").run();
+        db.prepare("UPDATE cards SET name = 'one changed' WHERE id = 1").run();
+
+        const current = vectors.get(generation.id);
+        assert.equal(current.expected_cards, 3);
+        assert.equal(current.total_items, 3);
+        assert.equal(db.prepare('SELECT COUNT(*) AS count FROM vector_work_items WHERE generation_id = ?').get(generation.id).count, 3);
+    } finally {
+        db.close();
+    }
+});
+
+test('an existing Lance table can reconcile completed snapshot card IDs', () => {
+    const { db, vectors } = harness();
+    try {
+        const generation = vectors.reconcile({
+            modelName: 'model', embedderName: 'embedder', dimensions: 8,
+            cardsIndexBase: 'cards', chunksIndexBase: 'chunks'
+        });
+        assert.equal(vectors.reconcileSnapshotCardIds(generation.id, ['1', '3', 'not-present']), 2);
+        assert.equal(vectors.get(generation.id).completed_items, 2);
+
+        const [remaining] = vectors.claimBatch({ generationId: generation.id, workerId: 'worker', limit: 10 });
+        assert.equal(remaining.card_id, '2');
+        vectors.completeItems([remaining.id]);
+        assert.equal(vectors.get(generation.id).status, 'ready');
     } finally {
         db.close();
     }
@@ -116,6 +155,8 @@ test('a stale failed lease cannot overwrite a newer queued revision', () => {
             modelName: 'model', embedderName: 'embedder', dimensions: 8,
             cardsIndexBase: 'cards', chunksIndexBase: 'chunks'
         });
+        db.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(generation.id);
+        vectors.activate(generation.id, { qualityApproved: true });
         const [leased] = vectors.claimBatch({ generationId: generation.id, workerId: 'worker-a', limit: 1 });
         db.prepare('UPDATE cards SET name = ? WHERE id = ?').run('new revision', Number(leased.card_id));
 

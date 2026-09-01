@@ -256,15 +256,15 @@ To ensure your archive is truly offline:
     *   `enableChunks: false` = lower footprint, whole-card semantic search only.
     *   `enableChunks: true` = builds both `cards_vsem` and `card_chunks`, enabling semantic snippets/chunk reranking.
 4.  Restart the server.
-5.  Start the durable vector worker in a separate terminal, then request a shadow generation:
+5.  Request a frozen shadow generation, then run the bounded worker in a separate terminal:
     ```bash
-    pnpm worker:vector
     curl -X POST http://127.0.0.1:6969/api/vector/reconcile \
       -H 'content-type: application/json' -d '{}'
+    pnpm worker:vector
     ```
     Set `embeddingProvider` to `ollama` or `openai`, and set `embeddingUrl`, `embeddingApiKey`, and `embedModel` for that endpoint. `ollamaUrl` remains supported for older configs.
 
-    *This creates or resumes a provider-aware shadow index and reads cards in bounded, checkpointed batches. LanceDB batches whole-card embedding requests and builds a compressed HNSW-SQ index before marking the final batch complete. Meilisearch still waits for its indexing tasks. Search continues using the active generation while the shadow builds.*
+    *This creates or resumes a provider-aware snapshot with a fixed card count, so downloads that arrive during the build cannot move its finish line. The worker uses one embedding request at a time by default, exits when the snapshot is complete, and has a six-hour default safety deadline (`VECTOR_DRAIN_MAX_MINUTES`). LanceDB batches whole-card embeddings and builds a compressed HNSW-SQ index before completion. Search continues using the active generation while the shadow builds.*
     The legacy `pnpm vector:backfill` command remains available for targeted repair, but it is not the normal full-rebuild path.
 6.  If you only want to remove chunk vectors while keeping whole-card vectors, run:
     ```bash

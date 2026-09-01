@@ -39,8 +39,7 @@ import {
 
 import {
     getPngInfo,
-    getCardMetadata,
-    syncFeatureFlagsFromMetadata
+    getCardMetadata
 } from '../services/CardMetadataService.js';
 
 import { getCardFilePaths } from '../utils/card-utils.js';

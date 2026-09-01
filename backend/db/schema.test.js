@@ -119,11 +119,11 @@ test('schema exposes model-aware vector generations and durable work items', () 
     }
 });
 
-test('card changes requeue building and ready vector generations', () => {
+test('card changes leave a frozen candidate alone and only queue the active generation', () => {
     const database = new Database(':memory:');
     try {
         ensureSchema(database);
-        const generation = database.prepare(`
+        const candidate = database.prepare(`
             INSERT INTO vector_generations (
                 name, model_name, embedder_name, dimensions, cards_index, chunks_index
             ) VALUES ('candidate', 'model', 'embedder', 8, 'cards_g1', 'chunks_g1')
@@ -131,16 +131,43 @@ test('card changes requeue building and ready vector generations', () => {
         `).get();
 
         database.prepare("INSERT INTO cards (id, name) VALUES (1, 'first')").run();
-        assert.equal(database.prepare('SELECT status FROM vector_work_items WHERE generation_id = ? AND card_id = ?').get(generation.id, '1').status, 'queued');
+        assert.equal(database.prepare('SELECT COUNT(*) AS count FROM vector_work_items WHERE generation_id = ?').get(candidate.id).count, 0);
 
-        database.prepare("UPDATE vector_work_items SET status = 'completed' WHERE generation_id = ?").run(generation.id);
-        database.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(generation.id);
+        database.prepare("UPDATE vector_generations SET status = 'ready' WHERE id = ?").run(candidate.id);
         database.prepare("UPDATE cards SET name = 'changed' WHERE id = 1").run();
+        assert.equal(database.prepare('SELECT status FROM vector_generations WHERE id = ?').get(candidate.id).status, 'ready');
+        assert.equal(database.prepare('SELECT COUNT(*) AS count FROM vector_work_items WHERE generation_id = ?').get(candidate.id).count, 0);
 
-        assert.equal(database.prepare('SELECT status FROM vector_generations WHERE id = ?').get(generation.id).status, 'building');
+        database.prepare("UPDATE vector_generations SET active = 1, status = 'active' WHERE id = ?").run(candidate.id);
+        database.prepare("UPDATE cards SET name = 'changed again' WHERE id = 1").run();
         assert.deepEqual(
-            database.prepare('SELECT status, action, revision FROM vector_work_items WHERE generation_id = ? AND card_id = ?').get(generation.id, '1'),
-            { status: 'queued', action: 'upsert', revision: 1 }
+            database.prepare('SELECT status, action, revision FROM vector_work_items WHERE generation_id = ? AND card_id = ?').get(candidate.id, '1'),
+            { status: 'queued', action: 'upsert', revision: 0 }
+        );
+    } finally {
+        database.close();
+    }
+});
+
+test('schema backfills a finite snapshot boundary for an existing generation', () => {
+    const database = new Database(':memory:');
+    try {
+        ensureSchema(database);
+        const generation = database.prepare(`
+            INSERT INTO vector_generations (
+                name, model_name, embedder_name, dimensions, cards_index, expected_cards
+            ) VALUES ('legacy-candidate', 'model', 'embedder', 8, 'cards_g1', 2)
+            RETURNING id
+        `).get();
+        database.prepare(`
+            INSERT INTO vector_work_items (generation_id, card_id)
+            VALUES (?, '1'), (?, '2'), (?, '3')
+        `).run(generation.id, generation.id, generation.id);
+
+        ensureSchema(database);
+        assert.equal(
+            database.prepare('SELECT snapshot_work_item_max_id FROM vector_generations WHERE id = ?').get(generation.id).snapshot_work_item_max_id,
+            2
         );
     } finally {
         database.close();

@@ -28,6 +28,8 @@ import { sillyTavernService } from './SillyTavernService.js';
 import { getRemoteCardNames } from './FederationService.js';
 import { appConfig } from './ConfigState.js';
 import { buildMeilisearchFilter } from '../utils/searchUtils.js';
+import { fuseHybridSearchIds, prioritizeLiteralTitleMatches } from './hybrid-ranking.js';
+import { hasBooleanSyntax, hasExactPhraseSyntax } from './search/boolean-query.js';
 import { logger } from '../utils/logger.js';
 
 const log = logger.scoped('CARD-QUERY');
@@ -249,57 +251,61 @@ export async function performAdvancedSearch(params) {
     }
 
     // Try vector search if available and we have query text
-    const vectorPreferred = hasQueryText && appConfig?.vectorSearch?.enabled === true && isVectorSearchReady();
-
+    const vectorPreferred = hasQueryText
+        && !hasBooleanSyntax(queryText)
+        && !hasExactPhraseSyntax(queryText)
+        && appConfig?.vectorSearch?.enabled === true
+        && isVectorSearchReady();
     if (vectorPreferred) {
         try {
+            const semanticRatio = Math.min(1, Math.max(0, Number(appConfig.vectorSearch.semanticRatio ?? 0.4)));
+            const candidateLimit = Math.min(1000, Math.max(
+                200,
+                Number(appConfig.vectorSearch.maxCardHits) || 400,
+                params.limit * 4
+            ));
             const [vectorResult, lexicalResult] = await Promise.all([
                 searchVectorCards({
                     text: queryText,
                     filter: meiliFilterExpression,
-                    page: params.page,
-                    limit: params.limit,
-                    sort: params.sort
+                    page: 1,
+                    limit: candidateLimit,
+                    sort: null
                 }),
                 searchLexicalCards({
                     text: queryText,
                     filter: meiliFilterExpression,
-                    page: params.page,
-                    limit: params.limit,
+                    page: 1,
+                    limit: candidateLimit,
                     sort: null
                 })
             ]);
 
-            // Merge results: vector first, then lexical to fill
             const vectorIds = Array.isArray(vectorResult.ids) ? vectorResult.ids : [];
             const lexicalIds = Array.isArray(lexicalResult.ids) ? lexicalResult.ids : [];
-            const finalIds = [];
-            const seen = new Set();
-
-            for (const id of vectorIds) {
-                if (finalIds.length >= params.limit) break;
-                if (!seen.has(id)) {
-                    finalIds.push(id);
-                    seen.add(id);
-                }
-            }
-
-            if (finalIds.length < params.limit) {
-                for (const id of lexicalIds) {
-                    if (finalIds.length >= params.limit) break;
-                    if (!seen.has(id)) {
-                        finalIds.push(id);
-                        seen.add(id);
-                    }
-                }
-            }
+            const fusedIds = fuseHybridSearchIds({
+                vectorIds,
+                lexicalIds,
+                semanticRatio,
+                rrfK: appConfig.vectorSearch.rrfK
+            });
+            const candidateCards = fusedIds.length > 0 ? getCardsByIdsOrdered(fusedIds) : [];
+            const rankedIds = prioritizeLiteralTitleMatches(fusedIds, candidateCards, queryText);
+            const offset = (params.page - 1) * params.limit;
+            const finalIds = rankedIds.slice(offset, offset + params.limit);
 
             let cards = [];
             if (finalIds.length > 0) {
                 cards = getCardsByIdsOrdered(finalIds);
             }
 
-            const total = lexicalResult.total || vectorResult.total || cards.length;
+            vectorResult.meta = {
+                ...(vectorResult.meta || {}),
+                semanticRatio,
+                vectorCandidates: vectorIds.length,
+                lexicalCandidates: lexicalIds.length
+            };
+            const total = rankedIds.length;
 
             return {
                 success: true,
@@ -323,7 +329,7 @@ export async function performAdvancedSearch(params) {
             filter: meiliFilterExpression,
             page: params.page,
             limit: params.limit,
-            sort: params.sort
+            sort: hasQueryText ? null : params.sort
         });
 
         let cards = [];

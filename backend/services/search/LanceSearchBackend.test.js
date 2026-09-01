@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { LanceSearchBackend } from './LanceSearchBackend.js';
+import { hasBooleanSyntax, hasExactPhraseSyntax } from './boolean-query.js';
 
 function document(overrides) {
     return {
@@ -103,6 +104,62 @@ test('LanceDB preserves lexical search, filters, sorting, and durable updates', 
     assert.deepEqual(incrementalText.ids, ['4']);
     assert.equal(await backend.countRows(), 3);
 
+    await backend.close();
+});
+
+test('LanceDB supports quoted exact-phrase searches', async t => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-phrase-'));
+    t.after(async () => rm(directory, { recursive: true, force: true }));
+    const backend = new LanceSearchBackend({ uri: directory, tableName: 'cards_test' });
+    await backend.rebuild([
+        document({ id: '1', name: 'The Fell Heroes Party' }),
+        document({ id: '2', name: 'Heroes Never Leave the Party' })
+    ]);
+
+    const result = await backend.searchLexical({ text: '"heroes party"', sort: null });
+
+    assert.deepEqual(result.ids, ['1']);
+    await backend.close();
+});
+
+test('LanceDB can return an internal hybrid candidate window larger than an API page', async t => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-window-'));
+    t.after(async () => rm(directory, { recursive: true, force: true }));
+    const backend = new LanceSearchBackend({ uri: directory, tableName: 'cards_test', maxTotalHits: 1000 });
+    await backend.rebuild(Array.from({ length: 250 }, (_, index) => document({
+        id: String(index + 1),
+        name: `Shared Hero ${index + 1}`
+    })));
+
+    const result = await backend.searchLexical({ text: 'shared', limit: 250, sort: null });
+
+    assert.equal(result.ids.length, 250);
+    assert.equal(result.total, 250);
+    await backend.close();
+});
+
+test('LanceDB applies documented Boolean query operators', async t => {
+    assert.equal(hasBooleanSyntax('mentor AND party'), true);
+    assert.equal(hasBooleanSyntax('heroes party'), false);
+    assert.equal(hasExactPhraseSyntax('"heroes party"'), true);
+    assert.equal(hasExactPhraseSyntax('heroes party'), false);
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-boolean-'));
+    t.after(async () => rm(directory, { recursive: true, force: true }));
+    const backend = new LanceSearchBackend({ uri: directory, tableName: 'cards_test' });
+    await backend.rebuild([
+        document({ id: '1', name: 'Mentor' }),
+        document({ id: '2', name: 'Party' }),
+        document({ id: '3', name: 'Mentor Party' }),
+        document({ id: '4', name: 'Guide' })
+    ]);
+
+    assert.deepEqual((await backend.searchLexical({ text: 'mentor AND party', sort: null })).ids, ['3']);
+    assert.deepEqual(new Set((await backend.searchLexical({ text: 'mentor OR party', sort: null })).ids), new Set(['1', '2', '3']));
+    assert.deepEqual((await backend.searchLexical({ text: 'mentor NOT party', sort: null })).ids, ['1']);
+    assert.deepEqual(
+        new Set((await backend.searchLexical({ text: '(mentor OR guide) NOT party', sort: null })).ids),
+        new Set(['1', '4'])
+    );
     await backend.close();
 });
 

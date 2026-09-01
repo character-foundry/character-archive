@@ -82,10 +82,12 @@ export const MarkdownContent = ({ content }: { content: string }) => (
 export const CollapsibleSection = ({
     title,
     children,
+    renderContent,
     defaultOpen = false,
 }: {
     title: string;
-    children: ReactNode;
+    children?: ReactNode;
+    renderContent?: () => ReactNode;
     defaultOpen?: boolean;
 }) => (
     <Disclosure defaultOpen={defaultOpen}>
@@ -96,7 +98,7 @@ export const CollapsibleSection = ({
                     <ChevronDown className={clsx('h-4 w-4 transition-transform', open ? 'rotate-180' : '')} />
                 </Disclosure.Button>
                 <Disclosure.Panel className="border-t border-slate-200/70 px-5 py-4 text-sm leading-relaxed text-slate-600 dark:border-slate-700/70 dark:text-slate-300">
-                    {children}
+                    {open ? (renderContent ? renderContent() : children) : null}
                 </Disclosure.Panel>
             </div>
         )}
@@ -106,10 +108,12 @@ export const CollapsibleSection = ({
 export const NestedSection = ({
     title,
     children,
+    renderContent,
     defaultOpen = false,
 }: {
     title: string;
-    children: ReactNode;
+    children?: ReactNode;
+    renderContent?: () => ReactNode;
     defaultOpen?: boolean;
 }) => (
     <Disclosure defaultOpen={defaultOpen}>
@@ -120,7 +124,7 @@ export const NestedSection = ({
                     <ChevronDown className={clsx('h-3.5 w-3.5 transition-transform', open ? 'rotate-180' : '')} />
                 </Disclosure.Button>
                 <Disclosure.Panel className="border-t border-slate-200/70 px-4 py-3 text-sm leading-relaxed text-slate-600 dark:border-slate-700/70 dark:text-slate-300">
-                    {children}
+                    {open ? (renderContent ? renderContent() : children) : null}
                 </Disclosure.Panel>
             </div>
         )}

@@ -6,6 +6,7 @@ import { Bool, Field, FixedSizeList, Float32, Float64, List, Schema, Utf8 } from
 
 import { logger } from '../../utils/logger.js';
 import { requestEmbeddings } from '../EmbeddingClient.js';
+import { evaluateBooleanQuery, parseBooleanQuery } from './boolean-query.js';
 import { compileLanceFilter } from './lance-filter.js';
 
 const log = logger.scoped('SEARCH:LANCE');
@@ -316,7 +317,7 @@ export class LanceSearchBackend {
     async createIndexes(table = null) {
         table ||= await this.open();
         await table.createIndex('searchText', {
-            config: lancedb.Index.fts({ withPosition: false, lowercase: true, asciiFolding: true }),
+            config: lancedb.Index.fts({ withPosition: true, lowercase: true, asciiFolding: true }),
             replace: true
         });
     }
@@ -331,10 +332,34 @@ export class LanceSearchBackend {
         const appliedFilter = compileLanceFilter(filter);
         const queryText = cleanString(text).trim();
         const pageNumber = Math.max(1, Number(page) || 1);
-        const perPage = Math.max(1, Math.min(Number(limit) || 48, 200));
+        const perPage = Math.max(1, Math.min(Number(limit) || 48, this.maxTotalHits));
         const offset = (pageNumber - 1) * perPage;
 
         if (queryText) {
+            const booleanQuery = parseBooleanQuery(queryText);
+            if (booleanQuery) {
+                const scoreMap = await evaluateBooleanQuery(booleanQuery, {
+                    searchTerm: async term => {
+                        let termQuery = table.search(term, 'fts', 'searchText').select(['id', '_score']);
+                        if (appliedFilter) termQuery = termQuery.where(appliedFilter);
+                        const termHits = await termQuery.limit(this.maxTotalHits).toArray();
+                        return termHits.map(hit => [String(hit.id), Number(hit._score) || 0]);
+                    },
+                    allIds: async () => {
+                        let allQuery = table.query().select(['id']);
+                        if (appliedFilter) allQuery = allQuery.where(appliedFilter);
+                        return (await allQuery.limit(this.maxTotalHits).toArray()).map(hit => String(hit.id));
+                    }
+                });
+                const hits = [...scoreMap.entries()]
+                    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+                return {
+                    ids: hits.slice(offset, offset + perPage).map(([id]) => id),
+                    total: hits.length,
+                    raw: null,
+                    appliedFilter
+                };
+            }
             let query = table.search(queryText, 'fts', 'searchText').select(['id', '_score']);
             if (appliedFilter) query = query.where(appliedFilter);
             if (typeof sort === 'string' && SORT_MAP[sort]) query = query.orderBy(SORT_MAP[sort]);
@@ -436,7 +461,7 @@ export class LanceSearchBackend {
         this.vectorAvailable = true;
         const appliedFilter = compileLanceFilter(filter);
         const pageNumber = Math.max(1, Number(page) || 1);
-        const perPage = Math.max(1, Math.min(Number(limit) || 48, 200));
+        const perPage = Math.max(1, Math.min(Number(limit) || 48, this.maxTotalHits));
         const offset = (pageNumber - 1) * perPage;
         const candidateLimit = Math.min(
             this.maxTotalHits,

@@ -10,3 +10,15 @@ export function shouldPauseForArchiveSync({ provider, setting } = {}) {
     if (override !== null) return override;
     return String(provider || '').trim().toLowerCase() === 'meilisearch';
 }
+
+export function drainDecision({ enabled = false, worked = false, generation = null, deadlineReached = false } = {}) {
+    if (!enabled) return 'continue';
+    if (deadlineReached) return 'timeout';
+    if (worked) return 'continue';
+    if (!generation) return 'complete';
+    if (generation.status === 'failed' || Number(generation.dead_items || 0) > 0) return 'failed';
+    const pending = Number(generation.queued_items || 0)
+        + Number(generation.retry_items || 0)
+        + Number(generation.running_items || 0);
+    return pending === 0 ? 'complete' : 'wait';
+}

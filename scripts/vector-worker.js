@@ -10,7 +10,7 @@ import { loadConfig } from '../config-loader.js';
 import { logger } from '../backend/utils/logger.js';
 import { LanceSearchBackend } from '../backend/services/search/LanceSearchBackend.js';
 import { parseVectorEtlResult, validateVectorEtlResult } from './vector-etl-contract.js';
-import { shouldPauseForArchiveSync } from './vector-worker-policy.js';
+import { drainDecision, shouldPauseForArchiveSync } from './vector-worker-policy.js';
 
 const log = logger.scoped('VECTOR:WORKER');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +25,9 @@ const lanceOptimizeEveryBatches = Number.isFinite(configuredOptimizeInterval)
     ? Math.max(0, Math.floor(configuredOptimizeInterval))
     : 20;
 const runOnce = process.argv.includes('--once');
+const drainMode = process.argv.includes('--drain');
+const drainStartedAt = Date.now();
+const drainMaxMinutes = Math.max(1, Number(process.env.VECTOR_DRAIN_MAX_MINUTES) || 360);
 let consecutiveFailures = 0;
 let circuitOpenUntil = 0;
 let lanceBatchesSinceOptimize = 0;
@@ -57,6 +60,19 @@ function specFromConfig(config) {
         chunksIndexBase: provider === 'lancedb' ? '' : (config.vectorSearch?.chunksIndex || 'card_chunks'),
         chunksEnabled: provider === 'lancedb' ? false : config.vectorSearch?.enableChunks !== false
     };
+}
+
+function matchesSpec(generation, spec) {
+    return generation.model_name === spec.modelName
+        && generation.embedder_name === spec.embedderName
+        && Number(generation.dimensions) === Number(spec.dimensions)
+        && Boolean(generation.chunks_index) === (spec.chunksIndexBase !== '' && spec.chunksEnabled !== false);
+}
+
+function failedGeneration(spec) {
+    return generations.list().find(generation => (
+        generation.status === 'failed' && matchesSpec(generation, spec)
+    )) || null;
 }
 
 async function meiliBacklog(config) {
@@ -148,8 +164,11 @@ async function tick() {
     if (config.vectorSearch?.enabled !== true || provider === 'disabled') return false;
     if (provider === 'meilisearch' && config.meilisearch?.enabled !== true) return false;
     const spec = specFromConfig(config);
-    if (process.env.VECTOR_AUTO_RECONCILE !== '0') generations.reconcile(spec);
-    const generation = generations.currentBuild(spec);
+    let generation = generations.currentBuild(spec);
+    if (!generation && process.env.VECTOR_AUTO_RECONCILE !== '0' && !failedGeneration(spec)) {
+        generations.reconcile(spec);
+        generation = generations.currentBuild(spec);
+    }
     if (!generation) return false;
 
     if (shouldPauseForArchiveSync({ provider, setting: process.env.VECTOR_PAUSE_DURING_SYNC })) {
@@ -170,7 +189,10 @@ async function tick() {
     if (stopping) return false;
 
     const items = generations.claimBatch({ generationId: generation.id, workerId, limit: batchSize, leaseSeconds: 900 });
-    if (!items.length) return false;
+    if (!items.length) {
+        generations.refreshProgress(generation.id);
+        return false;
+    }
     try {
         await runEtl(items, generation, config);
         const pendingBeforeClaim = generation.queued_items + generation.retry_items + generation.running_items;
@@ -241,6 +263,29 @@ async function main() {
         }
         if (runOnce) break;
         if (stopping) break;
+        const config = loadConfig();
+        const spec = config.vectorSearch?.enabled === true ? specFromConfig(config) : null;
+        const generation = spec ? (generations.currentBuild(spec) || failedGeneration(spec)) : null;
+        const decision = drainDecision({
+            enabled: drainMode,
+            worked,
+            generation,
+            deadlineReached: Date.now() - drainStartedAt >= drainMaxMinutes * 60_000
+        });
+        if (decision === 'complete') {
+            log.info('Finite vector drain is complete; exiting');
+            break;
+        }
+        if (decision === 'timeout') {
+            log.error(`Finite vector drain exceeded ${drainMaxMinutes} minutes; exiting without restart`);
+            process.exitCode = 2;
+            break;
+        }
+        if (decision === 'failed') {
+            log.error(`Finite vector drain failed with ${generation?.dead_items || 0} dead work items; exiting without restart`);
+            process.exitCode = 1;
+            break;
+        }
         if (!worked) await new Promise(resolve => setTimeout(resolve, pollMs));
     } while (!stopping);
 }

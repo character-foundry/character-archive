@@ -135,6 +135,7 @@ export function ensureSchema(db) {
             active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0,1)),
             cursor_card_id TEXT,
             expected_cards INTEGER NOT NULL DEFAULT 0,
+            snapshot_work_item_max_id INTEGER,
             indexed_cards INTEGER NOT NULL DEFAULT 0,
             indexed_chunks INTEGER NOT NULL DEFAULT 0,
             failed_items INTEGER NOT NULL DEFAULT 0,
@@ -293,12 +294,9 @@ export function ensureSchema(db) {
         BEGIN
             INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert')
             ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
-            UPDATE vector_generations
-            SET status = 'building', completed_at = NULL
-            WHERE status = 'ready';
             INSERT INTO vector_work_items (generation_id, card_id, action)
             SELECT id, CAST(NEW.id AS TEXT), 'upsert'
-            FROM vector_generations WHERE active = 1 OR status = 'building'
+            FROM vector_generations WHERE active = 1
             ON CONFLICT(generation_id, card_id) DO UPDATE SET
                 action = 'upsert', status = 'queued', revision = vector_work_items.revision + 1,
                 next_attempt_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;
@@ -309,12 +307,9 @@ export function ensureSchema(db) {
         BEGIN
             INSERT INTO vector_index_queue(cardId, action) VALUES (NEW.id, 'upsert')
             ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
-            UPDATE vector_generations
-            SET status = 'building', completed_at = NULL
-            WHERE status = 'ready';
             INSERT INTO vector_work_items (generation_id, card_id, action)
             SELECT id, CAST(NEW.id AS TEXT), 'upsert'
-            FROM vector_generations WHERE active = 1 OR status = 'building'
+            FROM vector_generations WHERE active = 1
             ON CONFLICT(generation_id, card_id) DO UPDATE SET
                 action = 'upsert', status = 'queued', revision = vector_work_items.revision + 1,
                 next_attempt_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;
@@ -325,12 +320,9 @@ export function ensureSchema(db) {
         BEGIN
             INSERT INTO vector_index_queue(cardId, action) VALUES (OLD.id, 'delete')
             ON CONFLICT(cardId) DO UPDATE SET action = excluded.action, queuedAt = CURRENT_TIMESTAMP;
-            UPDATE vector_generations
-            SET status = 'building', completed_at = NULL
-            WHERE status = 'ready';
             INSERT INTO vector_work_items (generation_id, card_id, action)
             SELECT id, CAST(OLD.id AS TEXT), 'delete'
-            FROM vector_generations WHERE active = 1 OR status = 'building'
+            FROM vector_generations WHERE active = 1
             ON CONFLICT(generation_id, card_id) DO UPDATE SET
                 action = 'delete', status = 'queued', revision = vector_work_items.revision + 1,
                 next_attempt_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;
@@ -423,6 +415,28 @@ export function ensureSchema(db) {
     addColumnIfMissing(db, 'cards', 'sourceUrl', 'TEXT');
     addColumnIfMissing(db, 'vector_work_items', 'revision', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'vector_work_items', 'leased_revision', 'INTEGER');
+    addColumnIfMissing(db, 'vector_generations', 'snapshot_work_item_max_id', 'INTEGER');
+
+    const generationsWithoutBoundary = db.prepare(`
+        SELECT id, expected_cards
+        FROM vector_generations
+        WHERE snapshot_work_item_max_id IS NULL
+    `).all();
+    const boundaryAtOffset = db.prepare(`
+        SELECT id FROM vector_work_items
+        WHERE generation_id = ?
+        ORDER BY id ASC
+        LIMIT 1 OFFSET ?
+    `);
+    const lastBoundary = db.prepare('SELECT MAX(id) AS id FROM vector_work_items WHERE generation_id = ?');
+    const updateBoundary = db.prepare('UPDATE vector_generations SET snapshot_work_item_max_id = ? WHERE id = ?');
+    for (const generation of generationsWithoutBoundary) {
+        const expected = Math.max(0, Number(generation.expected_cards) || 0);
+        const boundary = expected > 0
+            ? boundaryAtOffset.get(generation.id, expected - 1)?.id ?? lastBoundary.get(generation.id)?.id ?? 0
+            : 0;
+        updateBoundary.run(Number(boundary), generation.id);
+    }
 
     db.prepare("UPDATE cards SET source = 'chub' WHERE source IS NULL OR source = ''").run();
 }

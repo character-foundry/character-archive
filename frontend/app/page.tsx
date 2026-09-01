@@ -156,7 +156,7 @@ function HomeContent() {
   const urlCardId = getCardIdFromURL();
   const lastUrlCardIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const result = resolveUrlCard(urlCardId, cards, lastUrlCardIdRef.current);
+    const result = resolveUrlCard(urlCardId, cards, lastUrlCardIdRef.current, selectedCard?.id ?? null);
     if (result.action === "clear") {
       lastUrlCardIdRef.current = result.nextLast;
       setSelectedCard(null);
@@ -167,7 +167,7 @@ function HomeContent() {
       openCardDetails(result.card);
     }
     // action "none" falls through
-  }, [urlCardId, cards, openCardDetails, setSelectedCard]);
+  }, [urlCardId, cards, openCardDetails, selectedCard?.id, setSelectedCard]);
 
   // Handlers with proper callbacks
   const handleTagClick = useCallback(async (tag: string) => {
@@ -206,6 +206,7 @@ function HomeContent() {
   }, [closeCardDetails, updateURL, filters, page, selectedCard?.id, setPushStatus, pushStatus]);
 
   const handleOpenCard = useCallback(async (card: Card) => {
+    lastUrlCardIdRef.current = card.id.toString();
     await openCardDetails(card, (cardId) => updateURL(filters, page, cardId, true));
   }, [openCardDetails, updateURL, filters, page]);
 

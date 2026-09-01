@@ -97,7 +97,7 @@ test('Lance vector ETL batches embeddings and fulfills the durable worker contra
     });
     assert.equal(result.cardUpdates, 3);
     assert.equal(embeddingRequests, 2, 'large inputs should remain split across inference requests');
-    assert.equal(peakEmbeddingRequests, 2, 'configured embedding concurrency should be used');
+    assert.equal(peakEmbeddingRequests, 1, 'embedding requests stay serialized even when an override requests more');
 
     const connection = await lancedb.connect(lancePath);
     const table = await connection.openTable('test_vectors');

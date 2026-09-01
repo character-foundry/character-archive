@@ -116,9 +116,6 @@ export async function getCardMetadata(cardId) {
     const metadataRaw = await fs.promises.readFile(jsonPath, 'utf8');
     const metadata = JSON.parse(metadataRaw);
 
-    // Sync feature flags while we're loading
-    await syncFeatureFlagsFromMetadata(cardId, metadata);
-
     return metadata;
 }
 

@@ -27,8 +27,10 @@ function hydrate(database, row) {
             SUM(CASE WHEN status = 'retry' THEN 1 ELSE 0 END) AS retry_items,
             SUM(CASE WHEN status = 'leased' OR status = 'submitted' THEN 1 ELSE 0 END) AS running_items,
             SUM(CASE WHEN status = 'dead' THEN 1 ELSE 0 END) AS dead_items
-        FROM vector_work_items WHERE generation_id = ?
-    `).get(row.id);
+        FROM vector_work_items
+        WHERE generation_id = ?
+          AND (? = 1 OR ? IS NULL OR id <= ?)
+    `).get(row.id, Number(row.active), row.snapshot_work_item_max_id, row.snapshot_work_item_max_id);
     return {
         ...row,
         active: Boolean(row.active),
@@ -96,6 +98,13 @@ export function createVectorGenerationRepository(database) {
             INSERT INTO vector_work_items (generation_id, card_id, action)
             SELECT ?, CAST(id AS TEXT), 'upsert' FROM cards ORDER BY id ASC
         `).run(generationId);
+        database.prepare(`
+            UPDATE vector_generations
+            SET snapshot_work_item_max_id = COALESCE((
+                SELECT MAX(id) FROM vector_work_items WHERE generation_id = ?
+            ), 0)
+            WHERE id = ?
+        `).run(generationId, generationId);
         return generationId;
     });
 
@@ -106,8 +115,15 @@ export function createVectorGenerationRepository(database) {
                 SUM(CASE WHEN status = 'dead' THEN 1 ELSE 0 END) AS failed,
                 SUM(CASE WHEN status NOT IN ('completed','dead') THEN 1 ELSE 0 END) AS remaining,
                 MAX(CASE WHEN status = 'completed' THEN card_id END) AS cursor
-            FROM vector_work_items WHERE generation_id = ?
-        `).get(generationId);
+            FROM vector_work_items
+            WHERE generation_id = ?
+              AND (
+                  (SELECT active FROM vector_generations WHERE id = ?) = 1
+                  OR id <= COALESCE((
+                      SELECT snapshot_work_item_max_id FROM vector_generations WHERE id = ?
+                  ), id)
+              )
+        `).get(generationId, generationId, generationId);
         const remaining = Number(state.remaining || 0);
         const failed = Number(state.failed || 0);
         const nextStatus = remaining === 0 ? (failed > 0 ? 'failed' : 'ready') : null;
@@ -171,9 +187,16 @@ export function createVectorGenerationRepository(database) {
                     WHERE generation_id = ? AND status IN ('leased','submitted') AND lease_expires_at <= ?
                 `).run(claimedAt, generationId, claimedAt);
                 const rows = database.prepare(`
-                    SELECT id FROM vector_work_items
-                    WHERE generation_id = ? AND status IN ('queued','retry') AND next_attempt_at <= ?
-                    ORDER BY id ASC LIMIT ?
+                    SELECT work.id FROM vector_work_items work
+                    JOIN vector_generations generation ON generation.id = work.generation_id
+                    WHERE work.generation_id = ?
+                      AND work.status IN ('queued','retry') AND work.next_attempt_at <= ?
+                      AND (
+                          generation.active = 1
+                          OR generation.snapshot_work_item_max_id IS NULL
+                          OR work.id <= generation.snapshot_work_item_max_id
+                      )
+                    ORDER BY work.id ASC LIMIT ?
                 `).all(generationId, claimedAt, safeLimit);
                 if (!rows.length) return [];
                 const ids = rows.map(row => row.id);
@@ -201,6 +224,39 @@ export function createVectorGenerationRepository(database) {
             `).run(completedAt, completedAt, ...ids).changes;
             rows.forEach(row => updateGenerationProgress(row.generation_id));
             return changes;
+        },
+
+        reconcileSnapshotCardIds(generationId, cardIds, now) {
+            const ids = [...new Set((cardIds || []).map(String).filter(Boolean))];
+            if (!ids.length) {
+                updateGenerationProgress(generationId);
+                return 0;
+            }
+            const completedAt = isoNow(now);
+            let changes = 0;
+            database.transaction(() => {
+                for (let offset = 0; offset < ids.length; offset += 500) {
+                    const chunk = ids.slice(offset, offset + 500);
+                    const placeholders = chunk.map(() => '?').join(',');
+                    changes += database.prepare(`
+                        UPDATE vector_work_items
+                        SET status = 'completed', completed_at = ?, updated_at = ?,
+                            lease_owner = NULL, lease_expires_at = NULL, last_error = NULL
+                        WHERE generation_id = ? AND card_id IN (${placeholders})
+                          AND action = 'upsert'
+                          AND id <= COALESCE((
+                              SELECT snapshot_work_item_max_id FROM vector_generations WHERE id = ?
+                          ), id)
+                    `).run(completedAt, completedAt, generationId, ...chunk, generationId).changes;
+                }
+                updateGenerationProgress(generationId);
+            })();
+            return changes;
+        },
+
+        refreshProgress(generationId) {
+            updateGenerationProgress(generationId);
+            return this.get(generationId);
         },
 
         releaseItems(ids, now) {

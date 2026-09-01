@@ -8,7 +8,8 @@ export type UrlCardResolution =
 export function resolveUrlCard(
   urlCardId: string | null,
   cards: Card[],
-  lastHandledId: string | null
+  lastHandledId: string | null,
+  selectedCardId: string | number | null = null
 ): UrlCardResolution {
   if (!urlCardId) {
     return { action: "clear", nextLast: null };
@@ -16,8 +17,8 @@ export function resolveUrlCard(
   if (cards.length === 0) {
     return { action: "none", nextLast: lastHandledId };
   }
-  if (urlCardId === lastHandledId) {
-    return { action: "none", nextLast: lastHandledId };
+  if (urlCardId === lastHandledId || urlCardId === String(selectedCardId ?? "")) {
+    return { action: "none", nextLast: urlCardId };
   }
 
   const card = cards.find(c => c.id.toString() === urlCardId);

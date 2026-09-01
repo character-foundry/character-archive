@@ -595,19 +595,26 @@ export const CardModal = ({
                                                             {alternateGreetings.length > 0 && (
                                                                 <CollapsibleSection
                                                                     title={`Alternate Greetings (${alternateGreetings.length})`}
-                                                                >
+                                                                    renderContent={() => (
                                                                     <div className="space-y-3">
                                                                         {alternateGreetings.map((greeting: string, index: number) => (
-                                                                            <NestedSection key={index} title={`Greeting ${index + 1}`}>
+                                                                            <NestedSection
+                                                                                key={index}
+                                                                                title={`Greeting ${index + 1}`}
+                                                                                renderContent={() => (
                                                                                 <MarkdownContent content={greeting} />
-                                                                            </NestedSection>
+                                                                                )}
+                                                                            />
                                                                         ))}
                                                                     </div>
-                                                                </CollapsibleSection>
+                                                                    )}
+                                                                />
                                                             )}
 
                                                             {(lorebookEntries.length > 0 || linkedLorebooks.length > 0) && (
-                                                                <CollapsibleSection title="Lorebook">
+                                                                <CollapsibleSection
+                                                                    title="Lorebook"
+                                                                    renderContent={() => (
                                                                     <div className="space-y-4">
                                                                         {lorebookEntries.length > 0 && (
                                                                             <div className="space-y-3">
@@ -619,7 +626,7 @@ export const CardModal = ({
                                                                                         <NestedSection
                                                                                             key={`${entry.name ?? index}-${index}`}
                                                                                             title={entry.name || `Entry ${index + 1}`}
-                                                                                        >
+                                                                                            renderContent={() => (
                                                                                             <div className="space-y-3 text-sm">
                                                                                                 {Array.isArray(entry.keys) &&
                                                                                                     entry.keys.length > 0 && (
@@ -641,7 +648,8 @@ export const CardModal = ({
                                                                                                     </div>
                                                                                                 )}
                                                                                             </div>
-                                                                                        </NestedSection>
+                                                                                            )}
+                                                                                        />
                                                                                     ))}
                                                                                 </div>
                                                                             </div>
@@ -681,7 +689,8 @@ export const CardModal = ({
                                                                             </div>
                                                                         )}
                                                                     </div>
-                                                                </CollapsibleSection>
+                                                                    )}
+                                                                />
                                                             )}
 
                                                             {shouldShowGallerySection && selectedCard && (
@@ -743,8 +752,7 @@ export const CardModal = ({
                                                                 <CollapsibleSection
                                                                     title={`Cached Assets (${cachedAssetsDetails.length})`}
                                                                     defaultOpen={false}
-                                                                >
-                                                                    {cachedAssetsLoading ? (
+                                                                    renderContent={() => cachedAssetsLoading ? (
                                                                         <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
                                                                             <Loader2 className="h-4 w-4 animate-spin" /> Loading cached
                                                                             assets…
@@ -823,11 +831,11 @@ export const CardModal = ({
                                                                             })}
                                                                         </div>
                                                                     )}
-                                                                </CollapsibleSection>
+                                                                />
                                                             )}
-
-                                                            <CollapsibleSection title="Raw Metadata">
-                                                                {detailsLoading ? (
+                                                            <CollapsibleSection
+                                                                title="Raw Metadata"
+                                                                renderContent={() => detailsLoading ? (
                                                                     <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-300">
                                                                         <Loader2 className="h-4 w-4 animate-spin" /> Loading metadata...
                                                                     </div>
@@ -840,7 +848,7 @@ export const CardModal = ({
                                                                         No metadata available.
                                                                     </p>
                                                                 )}
-                                                            </CollapsibleSection>
+                                                            />
                                                         </div>
                                                     </div>
                                                 </div>

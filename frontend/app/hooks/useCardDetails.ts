@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import {
   fetchCardMetadata,
-  fetchPngInfo,
   fetchCardGallery,
   getCachedAssets,
 } from "@/lib/api";
@@ -128,9 +127,8 @@ export function useCardDetails(
     setGalleryMessage(null);
 
     try {
-      const [metadata, pngInfo, galleryResult] = await Promise.all([
+      const [metadata, galleryResult] = await Promise.all([
         fetchCardMetadata(card.id).catch(() => null),
-        fetchPngInfo(card.id).catch(() => null),
         shouldFetchGallery
           ? fetchCardGallery(card.id).catch(err => ({
               success: false,
@@ -166,7 +164,10 @@ export function useCardDetails(
           }
         : null;
 
-      if (metadataFlags) {
+      const metadataFlagsChanged = metadataFlags && Object.entries(metadataFlags).some(
+        ([key, value]) => Boolean((card as any)[key]) !== value
+      );
+      if (metadataFlagsChanged) {
         setSelectedCard(prev => (prev && prev.id === card.id ? { ...prev, ...metadataFlags } : prev));
         setCards(prev =>
           prev.map(existing => (existing.id === card.id ? { ...existing, ...metadataFlags } : existing))
@@ -182,7 +183,7 @@ export function useCardDetails(
 
       setCardDetails({
         metadata: metadata && metadataFlags ? { ...metadata, ...metadataFlags } : metadata,
-        pngInfo,
+        pngInfo: null,
         gallery: galleryAssets,
         galleryError,
       });
@@ -206,10 +207,11 @@ export function useCardDetails(
   const pngData = cardDetails.pngInfo?.data?.data ?? null;
 
   const definitionData = useMemo(() => {
-    const definition = (cardDetails.metadata as any)?.definition;
-    if (!definition) return null;
-    if (definition?.data) {
-      return definition.data as Record<string, any>;
+    const metadata = cardDetails.metadata as any;
+    if (metadata?.definition?.data) return metadata.definition.data as Record<string, any>;
+    if (metadata?.data && typeof metadata.data === "object") return metadata.data as Record<string, any>;
+    if (metadata?.definition && typeof metadata.definition === "object") {
+      return metadata.definition as Record<string, any>;
     }
     return null;
   }, [cardDetails.metadata]);
