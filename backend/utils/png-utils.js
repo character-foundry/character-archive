@@ -1,10 +1,28 @@
 import fs from 'fs';
 import extractChunks from 'png-chunks-extract';
+import encodeChunks from 'png-chunks-encode';
+import textChunk from 'png-chunk-text';
 import { logger } from './logger.js';
 
 const log = logger.scoped('PNG-UTIL');
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+
+/** Embed the current definition without retaining stale v2/v3 card chunks. */
+export function embedCardDefinition(pngBuffer, definition) {
+    const cardKeys = new Set(['chara', 'ccv3', 'chara_card_v3']);
+    const chunks = extractChunks(pngBuffer).filter(chunk => {
+        if (!['tEXt', 'zTXt', 'iTXt'].includes(chunk.name)) return true;
+        const data = Buffer.from(chunk.data);
+        const separator = data.indexOf(0);
+        return !cardKeys.has(data.subarray(0, separator).toString('latin1'));
+    });
+    const endIndex = chunks.findIndex(chunk => chunk.name === 'IEND');
+    if (endIndex < 1) throw new Error('Cannot embed character data in an incomplete PNG');
+    const payload = Buffer.from(JSON.stringify(definition), 'utf8').toString('base64');
+    chunks.splice(endIndex, 0, textChunk.encode('chara', payload));
+    return Buffer.from(encodeChunks(chunks));
+}
 
 /**
  * Extract dimensions directly from PNG IHDR chunk

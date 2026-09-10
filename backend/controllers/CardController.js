@@ -45,6 +45,7 @@ import {
 import { getCardFilePaths } from '../utils/card-utils.js';
 import { refreshCard } from '../services/scraper.js';
 import { refreshRisuCard } from '../services/scrapers/RisuAiScraper.js';
+import { refreshCtCard } from '../services/scrapers/CtScraper.js';
 import {
     setCardGalleryFlag,
     setCardFavoriteFlag,
@@ -107,10 +108,8 @@ class CardController {
             const card = db.prepare('SELECT source FROM cards WHERE id = ?').get(cardId);
 
             if (card?.source === 'ct') {
-                return res.status(400).json({ error: 'Refreshing Character Tavern cards is not currently supported.' });
-            }
-
-            if (card?.source === 'risuai') {
+                await refreshCtCard(cardId, appConfig);
+            } else if (card?.source === 'risuai') {
                 await refreshRisuCard(cardId, appConfig);
             } else {
                 await refreshCard(cardId, appConfig);

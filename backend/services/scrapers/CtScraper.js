@@ -13,6 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { BaseScraper } from './BaseScraper.js';
 import { detectLanguage, getDatabase } from '../../database.js';
+import { embedCardDefinition } from '../../utils/png-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -466,7 +467,8 @@ export class CtScraper extends BaseScraper {
             // CT images are required. fetchImage validates the signature and throws on failure.
             const imageBuffer = await this.fetchImage(sourcePath);
 
-            await this.writeCardFiles(dbId, { json: metadata, png: imageBuffer });
+            const cardPng = embedCardDefinition(imageBuffer, metadata.definition);
+            await this.writeCardFiles(dbId, { json: metadata, png: cardPng });
             this.upsertCard(metadata);
 
             this.log.info(`${existing ? 'Updated' : 'Imported'} CT card: ${metadata.name} (${sourceId} -> ${dbId})`);
@@ -481,6 +483,25 @@ export class CtScraper extends BaseScraper {
             this.log.error(`Failed to import CT card ${item?.name || item?.path || item?.id}`, error);
             return { success: false, reason: 'error', error: error.message };
         }
+    }
+
+    async refreshCard(dbId, config = {}) {
+        const card = getDatabase().prepare(
+            'SELECT id, source, sourceId, sourcePath FROM cards WHERE id = ?'
+        ).get(dbId);
+        if (!card) throw new Error(`Card ${dbId} not found`);
+        if (card.source !== this.source) {
+            throw new Error(`Card ${dbId} is not a Character Tavern card (source: ${card.source})`);
+        }
+
+        // A manual update refreshes this saved card regardless of polling filters or timestamps.
+        this._currentCookies = config.cookies || [];
+        const result = await this.processCard(
+            { id: card.sourceId, path: card.sourcePath },
+            { cookies: this._currentCookies, force: true }
+        );
+        if (!result.success) throw new Error(`Failed to refresh: ${result.error || result.reason}`);
+        return result;
     }
 
     /**
@@ -570,6 +591,10 @@ export class CtScraper extends BaseScraper {
 
 // Export singleton instance for backwards compatibility
 export const ctScraper = new CtScraper();
+
+export async function refreshCtCard(dbId, appConfig = {}) {
+    return new CtScraper().refreshCard(dbId, appConfig.ctSync || {});
+}
 
 // Export sync function for backwards compatibility
 export async function syncCharacterTavern(appConfig = {}, progressCallback = null) {

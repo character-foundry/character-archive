@@ -1,9 +1,135 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import axios from 'axios';
+import extractChunks from 'png-chunks-extract';
+import encodeChunks from 'png-chunks-encode';
+import textChunk from 'png-chunk-text';
+import { parseCard } from '@character-foundry/loader';
+import { createConnection, closeConnection } from '../../db/connection.js';
+import { ensureSchema } from '../../db/schema.js';
+import { BaseScraper } from './BaseScraper.js';
 
 import { CtScraper } from './CtScraper.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+const AVATAR = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==', 'base64');
+
+function setupCardUpdate(t, image = AVATAR) {
+    const db = createConnection(':memory:');
+    t.after(closeConnection);
+    ensureSchema(db);
+    db.prepare(`INSERT INTO cards (id, name, source, sourceId, sourcePath, lastModified, favorited)
+        VALUES (91, 'Old metadata', 'ct', 'old-version', 'alice/test_card', '2099-01-01 00:00:00', 1)`).run();
+    const requests = [];
+    const writes = [];
+    t.mock.method(axios, 'get', async (url, options) => {
+        requests.push({ url, options });
+        if (url.endsWith('/api/character/alice/test_card')) return { data: { card: {
+            id: 'new-version', path: 'alice/test_card', name: 'Updated card', versionId: 8,
+            lastUpdatedAt: '2026-09-01T00:00:00Z', lorebookId: 44,
+            definition_character_description: 'Complete character definition',
+            definition_first_message: 'Hello from the updated card', tokenTotal: 12
+        } } };
+        if (url.endsWith('/tags')) return { data: ['test'] };
+        if (url.endsWith('/alternative-greetings')) return { data: ['Another greeting'] };
+        if (url.endsWith('/content-warnings')) return { data: { contentWarnings: [] } };
+        if (url.endsWith('/lorebook')) return { data: { id: 44, entries: [{ content: 'World fact', keys: ['world'] }] } };
+        if (url.includes('ct-cards.storage.character-tavern.com')) return { data: image };
+        throw new Error(`Unexpected URL ${url}`);
+    });
+    t.mock.method(BaseScraper.prototype, 'writeCardFiles', async (dbId, files) => writes.push({ dbId, ...files }));
+    return { db, requests, writes };
+}
+
+function assertImportableCard(writes) {
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].dbId, 91);
+    // Parse only the downloadable PNG: the sidecar must not be needed to import it.
+    const { card } = parseCard(writes[0].png, '91.png');
+    assert.equal(card.data.description, 'Complete character definition');
+    assert.equal(card.data.first_mes, 'Hello from the updated card');
+    assert.deepEqual(card.data.alternate_greetings, ['Another greeting']);
+    assert.equal(card.data.character_book.entries[0].content, 'World fact');
+}
+
+test('Character Tavern sync saves a PNG with an importable definition even for a plain CDN avatar', async t => {
+    const { writes } = setupCardUpdate(t);
+    const scraper = new CtScraper();
+    const result = await scraper.processCard({ id: 'new-version', path: 'alice/test_card' }, { force: true });
+    assert.equal(result.success, true, result.error);
+    assertImportableCard(writes);
+});
+
+test('Character Tavern replaces stale embedded definitions while preserving image chunks', async t => {
+    const chunks = extractChunks(AVATAR);
+    const stale = { spec: 'chara_card_v3', spec_version: '3.0', data: { name: 'Stale', description: 'Outdated' } };
+    const payload = Buffer.from(JSON.stringify(stale)).toString('base64');
+    chunks.splice(-1, 0, textChunk.encode('chara', payload), textChunk.encode('ccv3', payload), textChunk.encode('Author', 'Original artist'));
+    const { writes } = setupCardUpdate(t, Buffer.from(encodeChunks(chunks)));
+    const result = await new CtScraper().refreshCard(91);
+    assert.equal(result.success, true);
+    assertImportableCard(writes);
+    const savedChunks = extractChunks(writes[0].png);
+    const savedText = savedChunks.filter(chunk => chunk.name === 'tEXt').map(chunk => textChunk.decode(chunk.data));
+    assert.equal(savedText.filter(chunk => chunk.keyword === 'chara').length, 1);
+    assert.equal(savedText.some(chunk => chunk.keyword === 'ccv3'), false);
+    assert.ok(savedText.some(chunk => chunk.keyword === 'Author' && chunk.text === 'Original artist'));
+    assert.deepEqual(savedChunks.filter(chunk => chunk.name !== 'tEXt'), extractChunks(AVATAR));
+});
+
+test('Character Tavern rejects a corrupt download without replacing cached card files or metadata', async t => {
+    const { db, writes } = setupCardUpdate(t, PNG);
+    await assert.rejects(() => new CtScraper().refreshCard(91), /Failed to refresh:/);
+    assert.equal(writes.length, 0);
+    assert.equal(db.prepare('SELECT sourceId FROM cards WHERE id = 91').get().sourceId, 'old-version');
+});
+
+test('Character Tavern refresh rejects a missing source path before making requests', async t => {
+    const { db, requests, writes } = setupCardUpdate(t);
+    db.prepare('UPDATE cards SET sourcePath = NULL WHERE id = 91').run();
+    await assert.rejects(() => new CtScraper().refreshCard(91), /no valid author\/slug path/);
+    assert.equal(requests.length, 0);
+    assert.equal(writes.length, 0);
+});
+
+test('Character Tavern refresh reports upstream errors without replacing cached cards', async t => {
+    const { writes } = setupCardUpdate(t);
+    t.mock.method(axios, 'get', async () => { throw new Error('Request failed with status code 403'); });
+    const { cardController } = await import('../../controllers/CardController.js');
+    const res = {
+        status(code) { this.statusCode = code; return this; },
+        json(body) { this.body = body; return this; }
+    };
+    await cardController.refreshCard({ params: { cardId: '91' } }, res);
+    assert.equal(res.statusCode, 500);
+    assert.match(res.body.error, /403/);
+    assert.equal(writes.length, 0);
+});
+
+test('Character Tavern manual refresh uses its saved path and forces a complete update', async t => {
+    const { db, requests, writes } = setupCardUpdate(t);
+    const { cardController } = await import('../../controllers/CardController.js');
+    const { appConfig } = await import('../ConfigState.js');
+    const previous = appConfig.ctSync;
+    appConfig.ctSync = { enabled: false, cookies: ['cf_clearance=fixture'], minTokens: 1000 };
+    t.after(() => { appConfig.ctSync = previous; });
+    const res = {
+        statusCode: 200,
+        status(code) { this.statusCode = code; return this; },
+        json(body) { this.body = body; return this; }
+    };
+
+    await cardController.refreshCard({ params: { cardId: '91' } }, res);
+
+    assert.equal(res.statusCode, 200, res.body?.error);
+    assert.equal(res.body.success, true);
+    assertImportableCard(writes);
+    assert.ok(requests.every(({ options }) => options.headers.Cookie === 'cf_clearance=fixture'));
+    const saved = db.prepare('SELECT sourceId, favorited FROM cards WHERE id = 91').get();
+    assert.equal(saved.sourceId, 'new-version');
+    assert.equal(saved.favorited, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM cards').get().count, 1);
+});
 
 test('Character Tavern detail bundle uses path detail and ID metadata endpoints', async () => {
     const requests = [];
