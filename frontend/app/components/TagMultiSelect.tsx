@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import CreatableSelect from 'react-select/creatable';
 import type { MultiValue, StylesConfig } from 'react-select';
 import clsx from 'clsx';
@@ -41,17 +41,17 @@ const buildSelectStyles = (isDark: boolean): StylesConfig<TagOption, true> => {
         control: (base, state) => ({
             ...base,
             backgroundColor: controlBg,
-            borderRadius: 18,
+            borderRadius: 6,
             border: 0,
             boxShadow: state.isFocused ? `0 0 0 2px rgba(99, 102, 241, 0.35)` : 'none',
-            padding: '0 6px',
-            minHeight: 40,
+            padding: '0 2px',
+            minHeight: 32,
             cursor: 'text',
         }),
         valueContainer: base => ({
             ...base,
-            gap: 6,
-            padding: '0 4px',
+            gap: 2,
+            padding: '1px 2px',
         }),
         placeholder: base => ({
             ...base,
@@ -65,7 +65,8 @@ const buildSelectStyles = (isDark: boolean): StylesConfig<TagOption, true> => {
             const isCanonical = Boolean(state.data?.isCanonical);
             return {
                 ...base,
-                borderRadius: 999,
+                borderRadius: 4,
+                margin: 1,
                 backgroundColor: isCanonical ? canonicalBg : multiBg,
                 color: isCanonical ? canonicalText : multiText,
                 border: isCanonical ? `1px solid ${canonicalBorder}` : base.border,
@@ -78,6 +79,7 @@ const buildSelectStyles = (isDark: boolean): StylesConfig<TagOption, true> => {
                 color: isCanonical ? canonicalText : multiText,
                 fontWeight: 600,
                 fontSize: '0.75rem',
+                padding: '1px 4px',
             };
         },
         multiValueRemove: (base, state) => {
@@ -95,7 +97,7 @@ const buildSelectStyles = (isDark: boolean): StylesConfig<TagOption, true> => {
             ...base,
             marginTop: 8,
             backgroundColor: menuBg,
-            borderRadius: 14,
+            borderRadius: 6,
             overflow: 'hidden',
             zIndex: 40,
         }),
@@ -118,7 +120,7 @@ const buildSelectStyles = (isDark: boolean): StylesConfig<TagOption, true> => {
                     : textColor;
             return {
                 ...base,
-                borderRadius: 12,
+                borderRadius: 4,
                 fontSize: '0.875rem',
                 fontWeight: state.isSelected ? 600 : isCanonical ? 600 : 500,
                 backgroundColor,
@@ -160,6 +162,7 @@ export const TagMultiSelect: React.FC<TagMultiSelectProps> = ({
     canonicalTags,
     disabled = false,
 }) => {
+    const inputId = useId();
     const [isMounted, setIsMounted] = useState(false);
     const [inputValue, setInputValue] = useState('');
     const [searchResults, setSearchResults] = useState<string[]>([]);
@@ -235,20 +238,20 @@ export const TagMultiSelect: React.FC<TagMultiSelectProps> = ({
 
     if (!isMounted) {
         return (
-            <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                <span className="font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</span>
+            <label className="flex min-w-0 flex-col gap-1 text-sm text-slate-600 dark:text-slate-300">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</span>
                 <div
                     className={clsx(
-                        'rounded-2xl border px-3 py-2 shadow-inner transition min-h-[44px]',
+                        'min-h-[34px] rounded-md border px-1 py-0.5 shadow-inner transition',
                         isDark ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white',
                     )}
                 >
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1">
                         {selectedTags.map(tag => (
                             <span
                                 key={tag}
                                 className={clsx(
-                                    'inline-flex items-center gap-1 rounded-xl px-2 py-1 text-xs font-semibold',
+                                    'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold',
                                     isCanonicalTag(tag)
                                         ? isDark
                                             ? 'bg-indigo-700 text-indigo-50'
@@ -268,16 +271,18 @@ export const TagMultiSelect: React.FC<TagMultiSelectProps> = ({
     }
 
     return (
-        <label className={clsx('flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300', disabled && 'opacity-60')}>
-            <span className="font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</span>
+        <div className={clsx('flex min-w-0 flex-col gap-1 text-sm text-slate-600 dark:text-slate-300', disabled && 'opacity-60')}>
+            <label htmlFor={inputId} className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</label>
             <div
                 className={clsx(
-                    'rounded-2xl border px-2 py-1 shadow-inner transition',
+                    'rounded-md border shadow-inner transition',
                     isDark ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white',
                     disabled && 'pointer-events-none',
                 )}
             >
                 <CreatableSelect
+                    inputId={inputId}
+                    instanceId={inputId}
                     isMulti
                     value={value}
                     options={options}
@@ -299,6 +304,6 @@ export const TagMultiSelect: React.FC<TagMultiSelectProps> = ({
                     isDisabled={disabled}
                 />
             </div>
-        </label>
+        </div>
     );
 };

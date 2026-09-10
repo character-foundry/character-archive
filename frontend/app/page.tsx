@@ -418,16 +418,10 @@ function HomeContent() {
         onToggleDarkMode={() => setDarkMode(prev => !prev)}
       />
 
-      <header className="mx-auto w-full max-w-7xl px-3 pt-5 pb-2 sm:px-6">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Character Archive</h1>
-          <SyncStatus syncStatus={syncStatus} ctSyncStatus={ctSyncStatus} />
-        </div>
-      </header>
-
       <PushNotification message={globalPushMessage} cardName={pushedCard?.name} onDismiss={() => setPushStatus(null)} />
 
-      <main className="mx-auto w-full max-w-7xl space-y-5 px-3 sm:px-6">
+      <main className="mx-auto w-full max-w-7xl space-y-3 px-3 pt-3 sm:px-6">
+        <SyncStatus syncStatus={syncStatus} ctSyncStatus={ctSyncStatus} />
         <FilterBar
           filters={filters}
           searchInputValue={searchInputValue}
