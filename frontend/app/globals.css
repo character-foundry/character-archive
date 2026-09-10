@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  --archive-header-height: 65px;
   --background: #ffffff;
   --foreground: #171717;
 }

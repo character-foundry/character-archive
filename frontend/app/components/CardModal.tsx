@@ -1,20 +1,17 @@
 'use client';
 
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import {
     X,
-    Star,
     Heart,
     Globe,
-    Archive,
     HeartOff,
     RefreshCw,
     Download,
     Send,
     Copy,
     Database,
-    FileDown,
     Loader2,
     Tag,
     Sparkles,
@@ -27,6 +24,8 @@ import {
 } from 'lucide-react';
 import Image from 'next/image';
 import clsx from 'clsx';
+import { CardArtwork } from './CardArtwork';
+import { TokenSummary } from './TokenSummary';
 import { CollapsibleSection, NestedSection, MarkdownContent } from './ContentSections';
 import type { Card, CachedAsset } from '@/lib/types';
 
@@ -123,7 +122,7 @@ type CardModalProps = {
 };
 
 export const CardModal = ({
-    selectedCard,
+    selectedCard: activeCard,
     closeCardDetails,
     getChubUrl,
     refreshStatus,
@@ -136,10 +135,6 @@ export const CardModal = ({
     handlePushToArchitect,
     canPushToArchitect,
     handleCopyLink,
-    handleCacheAssets,
-    cachingAssets,
-    assetCacheStatus,
-    handleExportCard,
     assetCacheMessage,
     galleryMessage,
     pushMessage,
@@ -169,14 +164,18 @@ export const CardModal = ({
     showNextAsset,
     lightboxIndex,
 }: CardModalProps) => {
+    // Keep the artwork and title mounted through the drawer's exit animation.
+    const [lastCard, setLastCard] = useState(activeCard);
+    if (activeCard && activeCard !== lastCard) setLastCard(activeCard);
+    const selectedCard = activeCard || lastCard;
     const activeChubUrl = selectedCard ? getChubUrl(selectedCard) : null;
     const refreshMessage = refreshStatus && selectedCard && refreshStatus.cardId === selectedCard.id ? refreshStatus : null;
 
     return (
         <>
             {/* Main card modal */}
-            <Transition.Root show={!!selectedCard} as={Fragment}>
-                <Dialog as="div" className="relative z-50" onClose={closeCardDetails}>
+            <Transition.Root show={!!activeCard} as={Fragment} afterLeave={() => setLastCard(null)}>
+                <Dialog as="div" className="fixed inset-x-0 bottom-0 top-[var(--archive-header-height)] z-50" onClose={closeCardDetails}>
                     <Transition.Child
                         as={Fragment}
                         enter="ease-out duration-200"
@@ -186,125 +185,39 @@ export const CardModal = ({
                         leaveFrom="opacity-100"
                         leaveTo="opacity-0"
                     >
-                        <div className="fixed inset-0 bg-black/70" />
+                        <div className="fixed inset-x-0 bottom-0 top-[var(--archive-header-height)] bg-slate-950/70" />
                     </Transition.Child>
 
-                    <div className="fixed inset-0 overflow-y-auto p-4 md:p-10">
-                        <div className="flex min-h-full items-center justify-center">
+                    <div className="pointer-events-none fixed inset-x-0 bottom-0 top-[var(--archive-header-height)] overflow-hidden">
+                        <div className="flex h-full justify-end">
                             <Transition.Child
                                 as={Fragment}
-                                enter="ease-out duration-200"
-                                enterFrom="opacity-0 translate-y-4 sm:scale-95"
-                                enterTo="opacity-100 translate-y-0 sm:scale-100"
-                                leave="ease-in duration-150"
-                                leaveFrom="opacity-100 translate-y-0 sm:scale-100"
-                                leaveTo="opacity-0 translate-y-4 sm:scale-95"
+                                enter="transform transition ease-out duration-300 motion-reduce:duration-0"
+                                enterFrom="translate-x-full"
+                                enterTo="translate-x-0"
+                                leave="transform transition ease-in duration-300 motion-reduce:duration-0"
+                                leaveFrom="translate-x-0"
+                                leaveTo="translate-x-full"
                             >
-                                <Dialog.Panel className="relative flex w-full max-w-[98vw] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-800 dark:bg-slate-950 md:w-[95vw] md:h-[92vh] xl:w-[90vw] xl:h-[90vh]">
+                                <Dialog.Panel className="pointer-events-auto relative flex h-full w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-800 dark:bg-slate-950 sm:w-[90vw]">
                                     <button
                                         onClick={closeCardDetails}
-                                        className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/5 text-slate-700 hover:bg-black/10 dark:bg-white/10 dark:text-slate-100"
+                                        aria-label="Close card details"
+                                        className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white/90 text-slate-700 backdrop-blur-sm hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-100 dark:hover:bg-slate-800"
                                     >
                                         <X className="h-4 w-4" />
                                     </button>
 
                                     {selectedCard && (
-                                        <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden p-4 md:p-8">
-                                            <div className="flex h-full min-h-0 flex-col gap-6 md:flex-row md:gap-8">
-                                                <div className="flex-shrink-0 md:flex md:h-full md:w-[35%] md:flex-col md:gap-4">
-                                                    <div className="relative h-[360px] w-full overflow-hidden rounded-3xl bg-slate-900 md:h-auto md:flex-1 md:max-h-[calc(100%-120px)]">
-                                                        <Image
-                                                            src={selectedCard.imagePath}
-                                                            alt={selectedCard.name}
-                                                            fill
-                                                            sizes="(max-width: 768px) 100vw, 40vw"
-                                                            loading="lazy"
-                                                            className="object-cover object-top"
-                                                        />
-                                                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-5 py-4 text-xs font-semibold uppercase tracking-wide text-white">
-                                                            <span className="flex items-center gap-2">
-                                                                <Star className="h-4 w-4" /> {selectedCard.tokenCount} tokens
-                                                            </span>
-                                                            <span className="flex items-center gap-2">
-                                                                <Heart className="h-4 w-4 text-rose-300" /> {selectedCard.n_favorites}
-                                                            </span>
-                                                            <span
-                                                                className={clsx(
-                                                                    'flex items-center gap-2 rounded-full px-3 py-1',
-                                                                    selectedCard.source === 'ct' ? 'bg-emerald-500/80' : 'bg-white/20'
-                                                                )}
-                                                            >
-                                                                {selectedCard.source === 'ct' ? (
-                                                                    <Globe className="h-4 w-4" />
-                                                                ) : (
-                                                                    <Archive className="h-4 w-4" />
-                                                                )}
-                                                                {selectedCard.source === 'ct' ? 'Character Tavern' : 'Chub'}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                    <div className="mt-4 md:mt-0 grid grid-cols-2 gap-3 text-slate-500 dark:text-slate-400">
-                                                        <div className="min-w-0 break-words">
-                                                            <span className="block text-[0.65rem] font-semibold uppercase tracking-wide">
-                                                                Last updated
-                                                            </span>
-                                                            <p className="mt-1 text-xs break-words text-slate-700 dark:text-slate-200">
-                                                                {selectedCard.lastModified}
-                                                            </p>
-                                                        </div>
-                                                        <div className="min-w-0 break-words">
-                                                            <span className="block text-[0.65rem] font-semibold uppercase tracking-wide">
-                                                                Created
-                                                            </span>
-                                                            <p className="mt-1 text-xs break-words text-slate-700 dark:text-slate-200">
-                                                                {selectedCard.createdAt}
-                                                            </p>
-                                                        </div>
-                                                        <div className="min-w-0 break-words">
-                                                            <span className="block text-[0.65rem] font-semibold uppercase tracking-wide">
-                                                                Language
-                                                            </span>
-                                                            <p className="mt-1 text-xs break-words text-slate-700 dark:text-slate-200">
-                                                                {selectedCard.language}
-                                                            </p>
-                                                        </div>
-                                                        <div className="min-w-0 break-words">
-                                                            <span className="block text-[0.65rem] font-semibold uppercase tracking-wide">
-                                                                Visibility
-                                                            </span>
-                                                            <p className="mt-1 text-xs capitalize break-words text-slate-700 dark:text-slate-200">
-                                                                {selectedCard.visibility}
-                                                            </p>
-                                                        </div>
-                                                        <div className="col-span-2 min-w-0 break-words">
-                                                            <span className="block text-[0.65rem] font-semibold uppercase tracking-wide">
-                                                                Source
-                                                            </span>
-                                                            <p className="mt-1 text-xs break-words text-slate-700 dark:text-slate-200">
-                                                                {selectedCard.source === 'ct' ? 'Character Tavern' : 'Chub'}
-                                                                {selectedCard.sourceUrl && (
-                                                                    <>
-                                                                        {' '}
-                                                                        <a
-                                                                            href={selectedCard.sourceUrl}
-                                                                            target="_blank"
-                                                                            rel="noreferrer"
-                                                                            className="text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-300"
-                                                                        >
-                                                                            View source
-                                                                        </a>
-                                                                    </>
-                                                                )}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                        <div className="h-full overflow-y-auto overscroll-contain md:overflow-hidden">
+                                            <div className="flex min-h-full flex-col md:h-full md:min-h-0 md:flex-row">
+                                                <CardArtwork card={selectedCard} />
 
-                                                <div className="flex-1 min-h-0 overflow-hidden">
-                                                    <div className="h-full overflow-y-auto pr-2">
-                                                        <div className="flex flex-col gap-6">
-                                                            <div className="space-y-3">
-                                                                <Dialog.Title className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                                                <div className="min-w-0 flex-1 md:min-h-0">
+                                                    <div className="px-4 py-5 md:h-full md:overflow-y-auto md:overscroll-contain md:px-6 md:py-6">
+                                                        <div className="flex flex-col gap-3">
+                                                            <div className="space-y-2">
+                                                                <Dialog.Title className="pr-10 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 lg:text-3xl">
                                                                     {selectedCard.name}
                                                                 </Dialog.Title>
                                                                 <span className="text-sm text-slate-500 dark:text-slate-400">
@@ -326,12 +239,12 @@ export const CardModal = ({
                                                                     )}
                                                                 </span>
                                                                 {selectedCard.tagline && (
-                                                                    <p className="rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                                                    <p className="rounded-lg bg-slate-100 px-2 py-1.5 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                                                                         {selectedCard.tagline}
                                                                     </p>
                                                                 )}
                                                                 {selectedCard.vectorMatch?.text && (
-                                                                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-slate-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-slate-100">
+                                                                    <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1.5 text-sm text-slate-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-slate-100">
                                                                         <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">
                                                                             <Sparkles className="h-3 w-3" />
                                                                             Semantic match
@@ -349,27 +262,27 @@ export const CardModal = ({
                                                                 {(selectedCard.hasAlternateGreetings || selectedCard.hasLorebook || selectedCard.hasGallery || selectedCard.hasEmbeddedImages || selectedCard.hasExpressions) && (
                                                                     <div className="flex flex-wrap gap-2 text-xs">
                                                                         {selectedCard.hasAlternateGreetings && (
-                                                                            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-3 py-1 font-medium text-indigo-600 dark:bg-indigo-500/30 dark:text-indigo-100">
+                                                                            <span className="inline-flex items-center gap-1 rounded-md bg-indigo-100 px-2 py-1 font-medium text-indigo-600 dark:bg-indigo-500/30 dark:text-indigo-100">
                                                                                 <Sparkles className="h-3 w-3" /> Alternate greetings available
                                                                             </span>
                                                                         )}
                                                                         {selectedCard.hasLorebook && (
-                                                                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 font-medium text-emerald-600 dark:bg-emerald-500/30 dark:text-emerald-100">
+                                                                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-1 font-medium text-emerald-600 dark:bg-emerald-500/30 dark:text-emerald-100">
                                                                                 <BookOpen className="h-3 w-3" /> Embedded lorebook included
                                                                             </span>
                                                                         )}
                                                                         {selectedCard.hasGallery && (
-                                                                            <span className="inline-flex items-center gap-1 rounded-full bg-teal-100 px-3 py-1 font-medium text-teal-600 dark:bg-teal-500/30 dark:text-teal-100">
+                                                                            <span className="inline-flex items-center gap-1 rounded-md bg-teal-100 px-2 py-1 font-medium text-teal-600 dark:bg-teal-500/30 dark:text-teal-100">
                                                                                 <Images className="h-3 w-3" /> Gallery included
                                                                             </span>
                                                                         )}
                                                                         {selectedCard.hasEmbeddedImages && (
-                                                                            <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1 font-medium text-orange-600 dark:bg-orange-500/30 dark:text-orange-100">
+                                                                            <span className="inline-flex items-center gap-1 rounded-md bg-orange-100 px-2 py-1 font-medium text-orange-600 dark:bg-orange-500/30 dark:text-orange-100">
                                                                                 <ImageIcon className="h-3 w-3" /> Images embedded in text
                                                                             </span>
                                                                         )}
                                                                         {selectedCard.hasExpressions && (
-                                                                            <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 font-medium text-purple-600 dark:bg-purple-500/30 dark:text-purple-100">
+                                                                            <span className="inline-flex items-center gap-1 rounded-md bg-purple-100 px-2 py-1 font-medium text-purple-600 dark:bg-purple-500/30 dark:text-purple-100">
                                                                                 <Smile className="h-3 w-3" /> Expressions available
                                                                             </span>
                                                                         )}
@@ -386,7 +299,7 @@ export const CardModal = ({
                                                                                     handleTagClick(tag);
                                                                                 }}
                                                                                 className={clsx(
-                                                                                    'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition',
+                                                                                    'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition',
                                                                                     highlightedTagsSet.has(tag.toLowerCase())
                                                                                         ? 'bg-indigo-600 text-white shadow-md'
                                                                                         : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
@@ -401,15 +314,15 @@ export const CardModal = ({
                                                             </div>
 
                                                             {detailsLoading && (
-                                                                <div className="flex items-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-100/60 px-4 py-3 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+                                                                <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-100/60 px-2 py-1.5 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
                                                                     <Loader2 className="h-4 w-4 animate-spin" /> Loading card data...
                                                                 </div>
                                                             )}
 
-                                                            <div className="flex flex-wrap gap-3">
+                                                            <div className="flex flex-wrap gap-2">
                                                                 <button
                                                                     onClick={() => toggleFavoriteCard(selectedCard)}
-                                                                    className="flex min-w-[160px] flex-1 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                                                                 >
                                                                     {selectedCard.favorited ? (
                                                                         <HeartOff className="h-4 w-4" />
@@ -423,7 +336,7 @@ export const CardModal = ({
                                                                         href={activeChubUrl}
                                                                         target="_blank"
                                                                         rel="noreferrer"
-                                                                        className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-600"
+                                                                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-600"
                                                                         aria-label="View on Chub"
                                                                     >
                                                                         <Globe className="h-4 w-4" />
@@ -432,7 +345,7 @@ export const CardModal = ({
                                                                 <button
                                                                     onClick={() => handleRefreshCard(selectedCard)}
                                                                     disabled={refreshingCardId === selectedCard.id}
-                                                                    className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200"
                                                                 >
                                                                     {refreshingCardId === selectedCard.id ? (
                                                                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -443,7 +356,7 @@ export const CardModal = ({
                                                                 </button>
                                                                 <button
                                                                     onClick={() => handleDownload(selectedCard)}
-                                                                    className="flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-2 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900"
                                                                 >
                                                                     <Download className="h-4 w-4" /> Download PNG
                                                                 </button>
@@ -455,7 +368,7 @@ export const CardModal = ({
                                                                             ? 'Send this card to Silly Tavern'
                                                                             : 'Enable Silly Tavern integration in settings first'
                                                                     }
-                                                                    className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 px-4 py-3 text-sm font-medium text-emerald-600 shadow-sm transition hover:border-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-600/40 dark:text-emerald-300"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-emerald-200 px-2 py-1.5 text-sm font-medium text-emerald-600 shadow-sm transition hover:border-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-600/40 dark:text-emerald-300"
                                                                 >
                                                                     <Send className="h-4 w-4" /> Push to Silly Tavern
                                                                 </button>
@@ -467,24 +380,24 @@ export const CardModal = ({
                                                                             ? 'Send this card to Character Architect'
                                                                             : 'Configure Character Architect URL in settings first'
                                                                     }
-                                                                    className="flex items-center justify-center gap-2 rounded-2xl border border-purple-200 px-4 py-3 text-sm font-medium text-purple-600 shadow-sm transition hover:border-purple-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-purple-600/40 dark:text-purple-300"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-purple-200 px-2 py-1.5 text-sm font-medium text-purple-600 shadow-sm transition hover:border-purple-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-purple-600/40 dark:text-purple-300"
                                                                 >
                                                                     <Send className="h-4 w-4" /> Push to Character Architect
                                                                 </button>
                                                                 <button
                                                                     onClick={() => handleCopyLink(selectedCard)}
-                                                                    className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:text-slate-200"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:text-slate-200"
                                                                 >
                                                                     <Copy className="h-4 w-4" /> Copy image URL
                                                                 </button>
                                                             </div>
 
                                                             {/* Asset caching section - Hidden for now as manual caching is disabled/automatic
-                                                            <div className="flex flex-wrap gap-3">
+                                                            <div className="flex flex-wrap gap-2">
                                                                 <button
                                                                     onClick={() => handleCacheAssets(selectedCard)}
                                                                     disabled={cachingAssets}
-                                                                    className="flex min-w-[160px] flex-1 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                                                                 >
                                                                     {cachingAssets ? (
                                                                         <>
@@ -501,14 +414,14 @@ export const CardModal = ({
                                                                 </button>
                                                                 <button
                                                                     onClick={() => handleExportCard(selectedCard, false)}
-                                                                    className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:text-slate-200"
+                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:text-slate-200"
                                                                 >
                                                                     <FileDown className="h-4 w-4" /> Export original
                                                                 </button>
                                                                 {assetCacheStatus?.cached && (
                                                                     <button
                                                                         onClick={() => handleExportCard(selectedCard, true)}
-                                                                        className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 px-4 py-3 text-sm font-medium text-emerald-600 shadow-sm transition hover:border-emerald-300 dark:border-emerald-600/40 dark:text-emerald-300"
+                                                                        className="flex items-center justify-center gap-2 rounded-lg border border-emerald-200 px-2 py-1.5 text-sm font-medium text-emerald-600 shadow-sm transition hover:border-emerald-300 dark:border-emerald-600/40 dark:text-emerald-300"
                                                                     >
                                                                         <Archive className="h-4 w-4" /> Export with local assets
                                                                     </button>
@@ -568,23 +481,7 @@ export const CardModal = ({
                                                                 </p>
                                                             )}
 
-                                                            {tokenCounts && (
-                                                                <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300 sm:grid-cols-3">
-                                                                    {Object.entries(tokenCounts).map(([key, value]) => (
-                                                                        <div
-                                                                            key={key}
-                                                                            className="flex items-center justify-between gap-3 rounded-xl bg-white/80 px-3 py-2 text-slate-600 shadow-sm dark:bg-slate-900/60 dark:text-slate-300"
-                                                                        >
-                                                                            <span className="text-[0.65rem] font-semibold">
-                                                                                {formatTokenKey(key)}
-                                                                            </span>
-                                                                            <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                                                                                {typeof value === 'number' ? value.toLocaleString() : String(value)}
-                                                                            </span>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            )}
+                                                            {tokenCounts && <TokenSummary counts={tokenCounts} formatKey={formatTokenKey} />}
 
                                                             {textSections.map((section) => (
                                                                 <CollapsibleSection key={section.title} title={section.title}>
@@ -663,7 +560,7 @@ export const CardModal = ({
                                                                                     {linkedLorebooks.map((lorebook, index) => (
                                                                                         <div
                                                                                             key={index}
-                                                                                            className="rounded-xl border border-slate-200/70 bg-slate-50 px-4 py-3 text-sm dark:border-slate-700/70 dark:bg-slate-800/40"
+                                                                                            className="rounded-xl border border-slate-200/70 bg-slate-50 px-2 py-1.5 text-sm dark:border-slate-700/70 dark:bg-slate-800/40"
                                                                                         >
                                                                                             <div className="font-semibold text-slate-700 dark:text-slate-200">
                                                                                                 {lorebook.name || `Lorebook ${index + 1}`}
@@ -709,7 +606,7 @@ export const CardModal = ({
                                                                                     key={asset.id}
                                                                                     type="button"
                                                                                     onClick={() => openLightbox(index)}
-                                                                                    className="group relative block overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm transition hover:border-indigo-300 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:border-slate-700 dark:bg-slate-900/30"
+                                                                                    className="group relative block overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm transition hover:border-indigo-300 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:border-slate-700 dark:bg-slate-900/30"
                                                                                 >
                                                                                     <div className="relative h-44 w-full overflow-hidden">
                                                                                         <Image
@@ -840,7 +737,7 @@ export const CardModal = ({
                                                                         <Loader2 className="h-4 w-4 animate-spin" /> Loading metadata...
                                                                     </div>
                                                                 ) : cardDetails.metadata ? (
-                                                                    <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-2xl bg-slate-900/95 p-4 text-xs text-slate-100">
+                                                                    <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-slate-900/95 p-4 text-xs text-slate-100">
                                                                         {JSON.stringify(cardDetails.metadata, null, 2)}
                                                                     </pre>
                                                                 ) : (

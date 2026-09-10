@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, Suspense, useRef } from "react";
-import { useSearchParams } from "next/navigation";
 import { fetchTagAliases } from "@/lib/api";
 import type { Card } from "@/lib/types";
 import { Loader2, Sparkles } from "lucide-react";
@@ -14,9 +13,8 @@ import { BulkActionBar } from "./components/BulkActionBar";
 import { SyncStatus, PushNotification } from "./components/StatusBanners";
 import { SettingsModal } from "./components/SettingsModal";
 import { FederationModal } from "./components/FederationModal";
-import { defaultFilters, normalizeFilters } from "./types/filters";
+import { type SavedSearch, normalizeFilters } from "./types/filters";
 import { defaultSillyTavernState, defaultCtSyncState, defaultVectorSearchState, defaultWyvernSyncState } from "./types/config";
-import { parseTagString } from "./utils/tags";
 import { useLightbox } from "./hooks/useLightbox";
 import { useCardSelection } from "./hooks/useCardSelection";
 import { useConfig } from "./hooks/useConfig";
@@ -29,7 +27,6 @@ import { useSavedSearches } from "./hooks/useSavedSearches";
 import { resolveUrlCard } from "./utils/urlCard";
 
 function HomeContent() {
-  const searchParams = useSearchParams();
   const [darkMode, setDarkMode] = useState(false);
   const [showFederation, setShowFederation] = useState(false);
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
@@ -54,7 +51,7 @@ function HomeContent() {
   const filtersManager = useFilters(undefined, clearSelection);
   const {
     filters, setFilters, searchInputValue, setSearchInputValue, advancedFilterInput, setAdvancedFilterInput,
-    includeTagsSelected, excludeTagsSelected, highlightedTags, highlightedTagsSet, page, setPage,
+    includeTagsSelected, excludeTagsSelected, highlightedTagsSet, page, setPage,
     handleFilterChange, handleIncludeTagsChange, handleExcludeTagsChange,
     handleClearFilters, updateURL, getCardIdFromURL,
   } = filtersManager;
@@ -269,13 +266,11 @@ function HomeContent() {
   const wrapPushToSilly = (card: Card) => handlePushToSilly(card, canPushToSilly, () => wrapCacheAssets(card));
   const wrapPushToArchitect = (card: Card) => handlePushToArchitect(card, canPushToArchitect);
 
-  const handleCardTextClick = (event: React.MouseEvent<HTMLDivElement>, card: Card, index: number) => {
-    const target = event.target as HTMLElement;
-    if (target.closest("button, a, input, textarea")) return;
+  const handleCardTextClick = (event: React.MouseEvent<HTMLElement>, card: Card, index: number) => {
     toggleSelection(card, index, event, cards);
   };
 
-  const handleApplySavedSearch = useCallback((search: any) => {
+  const handleApplySavedSearch = useCallback((search: SavedSearch) => {
     applySavedSearch(search, {
       setFilters,
       setPage,
@@ -307,8 +302,8 @@ function HomeContent() {
       if (chubProfileInputRef.current) chubProfileInputRef.current.value = result.profile;
       setConfig(prev => prev ? { ...prev, chubProfileName: result.profile, followedCreators: usernames } : prev);
       setChubFollowStatus({ type: "success", message: `Loaded ${usernames.length} creator${usernames.length === 1 ? "" : "s"} from Chub.` });
-    } catch (err: any) {
-      setChubFollowStatus({ type: "error", message: err?.message || "Failed to fetch followed creators." });
+    } catch (err) {
+      setChubFollowStatus({ type: "error", message: err instanceof Error ? err.message : "Failed to fetch followed creators." });
     } finally {
       setIsFetchingChubFollows(false);
     }
@@ -326,8 +321,8 @@ function HomeContent() {
       if (blockedCreatorsTextareaRef.current) blockedCreatorsTextareaRef.current.value = usernames.join(", ");
       setConfig(prev => prev ? { ...prev, blockedCreators: usernames } : prev);
       setChubBlockedStatus({ type: "success", message: `Loaded ${usernames.length} blocked user${usernames.length === 1 ? "" : "s"} from Chub.` });
-    } catch (err: any) {
-      setChubBlockedStatus({ type: "error", message: err?.message || "Failed to fetch blocked users." });
+    } catch (err) {
+      setChubBlockedStatus({ type: "error", message: err instanceof Error ? err.message : "Failed to fetch blocked users." });
     } finally {
       setIsFetchingChubBlocked(false);
     }
@@ -374,7 +369,7 @@ function HomeContent() {
             </div>
           </div>
         )}
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(190px,1fr))]">
           {cards.map((card, index) => (
             <CardItem
               key={card.id}
@@ -423,7 +418,7 @@ function HomeContent() {
         onToggleDarkMode={() => setDarkMode(prev => !prev)}
       />
 
-      <header className="mx-auto w-full max-w-7xl px-6 pt-6 pb-2">
+      <header className="mx-auto w-full max-w-7xl px-3 pt-5 pb-2 sm:px-6">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Character Archive</h1>
           <SyncStatus syncStatus={syncStatus} ctSyncStatus={ctSyncStatus} />
@@ -432,7 +427,7 @@ function HomeContent() {
 
       <PushNotification message={globalPushMessage} cardName={pushedCard?.name} onDismiss={() => setPushStatus(null)} />
 
-      <main className="mx-auto w-full max-w-7xl space-y-6 px-6">
+      <main className="mx-auto w-full max-w-7xl space-y-5 px-3 sm:px-6">
         <FilterBar
           filters={filters}
           searchInputValue={searchInputValue}
@@ -456,7 +451,7 @@ function HomeContent() {
           onRemoveSavedSearch={removeSavedSearch}
         />
 
-        <section className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-lg dark:border-slate-800 dark:bg-slate-900">
+        <section className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 dark:border-slate-800 dark:bg-slate-900">
           <BulkActionBar
             selectedCount={selectedIds.length}
             bulkRefreshing={bulkRefreshing}

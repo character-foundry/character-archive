@@ -21,8 +21,8 @@ export function PaginationControls({
   onLast,
 }: PaginationControlsProps) {
   const btnClass = clsx(
-    "flex items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
-    size === "md" ? "h-10 w-10" : "h-9 w-9"
+    "flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+    size === "md" ? "h-9 w-9" : "h-8 w-8"
   );
 
   return (

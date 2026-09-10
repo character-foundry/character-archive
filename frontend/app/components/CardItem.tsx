@@ -1,24 +1,20 @@
-import Image from "next/image";
-import clsx from "clsx";
+import Image from 'next/image';
+import clsx from 'clsx';
 import {
-  Archive,
   BookOpen,
-  Copy,
-  Download,
-  Globe,
+  Check,
   Hash,
   Heart,
   Image as ImageIcon,
   Images,
   PenTool,
   PlugZap,
-  Send,
+  Smile,
   Sparkles,
   Star,
-  Smile,
-  Trash2,
-} from "lucide-react";
-import type { Card } from "@/lib/types";
+} from 'lucide-react';
+import type { Card } from '@/lib/types';
+import { CardItemActions } from './CardItemActions';
 
 interface CardItemProps {
   card: Card;
@@ -28,7 +24,7 @@ interface CardItemProps {
   canPushToSilly: boolean;
   chubUrl: string | null;
   onOpenDetails: (card: Card) => void;
-  onCardTextClick: (event: React.MouseEvent<HTMLDivElement>, card: Card, index: number) => void;
+  onCardTextClick: (event: React.MouseEvent<HTMLElement>, card: Card, index: number) => void;
   onTagClick: (tag: string) => void;
   onAuthorClick: (author: string) => void;
   onToggleFavorite: (card: Card) => void;
@@ -38,10 +34,6 @@ interface CardItemProps {
   onDelete: (card: Card) => void;
 }
 
-/**
- * Individual card component displaying character information and actions
- * Handles card image, metadata, tags, and action buttons
- */
 export function CardItem({
   card,
   index,
@@ -59,286 +51,210 @@ export function CardItem({
   onCopyLink,
   onDelete,
 }: CardItemProps) {
-  const authorName = (card.author || "").trim();
-  const displayAuthor = authorName || "Unknown";
-  const authorClickable = authorName.length > 0;
+  const author = card.author?.trim();
+  const source =
+    card.source === 'ct'
+      ? 'CT'
+      : card.source === 'risuai'
+        ? 'Risu'
+        : card.source === 'wyvern'
+          ? 'Wyvern'
+          : 'Chub';
+  const features = [
+    { enabled: card.hasAlternateGreetings, icon: Sparkles, label: 'Alternate greetings' },
+    { enabled: card.hasLorebook, icon: BookOpen, label: 'Lorebook' },
+    { enabled: card.hasGallery, icon: Images, label: 'Gallery' },
+    { enabled: card.hasEmbeddedImages, icon: ImageIcon, label: 'Embedded images' },
+    { enabled: card.hasExpressions, icon: Smile, label: 'Expressions' },
+  ].filter((feature) => feature.enabled);
 
   return (
     <div
+      data-card-id={card.id}
       className={clsx(
-        "group flex flex-col overflow-hidden rounded-3xl border bg-white transition hover:-translate-y-1 hover:shadow-2xl dark:bg-slate-900",
+        'group relative isolate aspect-[9/16] min-w-0 cursor-pointer overflow-hidden rounded-xl border bg-slate-950 text-white shadow-sm transition duration-200 hover:border-slate-500 hover:shadow-lg motion-reduce:transition-none',
         isSelected
-          ? "border-indigo-500 ring-2 ring-indigo-400/50 dark:border-indigo-400"
-          : "border-slate-200 dark:border-slate-800",
+          ? 'border-indigo-400 ring-2 ring-indigo-400/70'
+          : 'border-slate-300/40 dark:border-slate-700/70',
       )}
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey) onCardTextClick(event, card, index);
+        else onOpenDetails(card);
+      }}
     >
-      <div
-        className="relative h-64 w-full overflow-hidden cursor-pointer"
-        onClick={() => onOpenDetails(card)}
-      >
-        <Image
-          src={card.imagePath}
-          alt={card.name}
-          width={420}
-          height={320}
-          loading="lazy"
-          className="h-full w-full object-cover object-top transition duration-500 group-hover:scale-105"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/65 to-transparent" />
-        <div className="absolute left-4 top-4 flex items-center gap-2 text-xs font-semibold text-white">
-          <span className="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 backdrop-blur">
-            <Star className="h-3 w-3 text-yellow-300" />
-            {card.starCount || 0}
-          </span>
-          <span className="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 backdrop-blur">
-            <Heart className="h-3 w-3 text-red-300" />
-            {card.n_favorites || 0}
-          </span>
-          <span className="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 backdrop-blur">
-            <Hash className="h-3 w-3 text-blue-300" />
-            {card.tokenCount || 0}
-          </span>
+      <Image
+        src={card.imagePath}
+        alt=""
+        fill
+        sizes="(max-width: 639px) 50vw, (max-width: 900px) 33vw, (max-width: 1100px) 25vw, 240px"
+        loading="lazy"
+        className="object-cover object-top transition-transform duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+      />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-transparent" />
+      <button
+        type="button"
+        aria-label={`Open ${card.name}`}
+        className="absolute inset-0 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-indigo-300"
+      />
+
+      <div className="pointer-events-none absolute inset-x-2 top-2 flex items-start justify-between gap-2">
+        <button
+          type="button"
+          aria-label={`${isSelected ? 'Deselect' : 'Select'} ${card.name}`}
+          aria-pressed={isSelected}
+          onClick={(event) => {
+            event.stopPropagation();
+            onCardTextClick(event, card, index);
+          }}
+          className={clsx(
+            'pointer-events-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md border backdrop-blur-sm transition',
+            isSelected
+              ? 'border-indigo-300 bg-indigo-600'
+              : 'border-white/30 bg-slate-950/45 hover:bg-slate-950/70',
+          )}
+        >
+          {isSelected ? (
+            <Check className="h-4 w-4" />
+          ) : (
+            <span className="h-3.5 w-3.5 rounded-sm border border-white/80" />
+          )}
+        </button>
+        <div className="flex flex-wrap justify-end gap-1 text-[10px] font-semibold">
           <span
             className={clsx(
-              "flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold backdrop-blur",
-              card.source === "ct" ? "bg-emerald-500/80 text-white" :
-              card.source === "risuai" ? "bg-pink-500/80 text-white" :
-              card.source === "wyvern" ? "bg-purple-500/80 text-white" : "bg-slate-900/40 text-white",
+              'rounded px-1.5 py-1 backdrop-blur-sm',
+              card.source === 'ct'
+                ? 'bg-emerald-950/85 text-emerald-200'
+                : card.source === 'risuai'
+                  ? 'bg-pink-950/85 text-pink-200'
+                  : card.source === 'wyvern'
+                    ? 'bg-purple-950/85 text-purple-200'
+                    : 'bg-slate-950/75 text-slate-200',
             )}
           >
-            {card.source === "ct" ? <Globe className="h-3 w-3" /> :
-             card.source === "risuai" ? <Smile className="h-3 w-3" /> :
-             card.source === "wyvern" ? <Globe className="h-3 w-3" /> : <Archive className="h-3 w-3" />}
-            {card.source === "ct" ? "CT" :
-             card.source === "risuai" ? "Risu" :
-             card.source === "wyvern" ? "Wyvern" : "Chub"}
+            {source}
           </span>
+          <span
+            title={`${card.tokenCount || 0} tokens`}
+            className="flex items-center gap-0.5 rounded bg-slate-950/75 px-1.5 py-1 text-slate-200"
+          >
+            <Hash className="h-3 w-3" />
+            {Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(
+              card.tokenCount || 0,
+            )}
+          </span>
+        </div>
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 space-y-2 p-3">
+        <div className="flex flex-wrap items-center gap-1 text-white/85">
+          {features.map(({ icon: Icon, label }) => (
+            <span
+              key={label}
+              title={label}
+              aria-label={label}
+              className="rounded bg-slate-950/65 p-1"
+            >
+              <Icon className="h-3 w-3" />
+            </span>
+          ))}
           {card.loadedInSillyTavern && (
             <span
-              className="flex items-center gap-1 rounded-full bg-emerald-500/80 px-3 py-1 backdrop-blur"
               title="Loaded in SillyTavern"
+              className="flex items-center gap-1 rounded bg-emerald-950/85 px-1.5 py-1 text-[10px] text-emerald-200"
             >
-              <PlugZap className="h-3 w-3 text-white" />
+              <PlugZap className="h-3 w-3" />
               ST
             </span>
           )}
           {card.syncedToArchitect && (
             <span
-              className="flex items-center gap-1 rounded-full bg-violet-500/80 px-3 py-1 backdrop-blur"
               title="Synced to Character Architect"
+              className="flex items-center gap-1 rounded bg-violet-950/85 px-1.5 py-1 text-[10px] text-violet-200"
             >
-              <PenTool className="h-3 w-3 text-white" />
+              <PenTool className="h-3 w-3" />
               CA
             </span>
           )}
         </div>
-        <div className="absolute inset-0 flex flex-col items-start justify-end gap-2 p-5 text-left">
+        <div>
+          <h2 className="line-clamp-2 text-base font-bold leading-tight tracking-tight text-white sm:text-lg">
+            {card.name}
+          </h2>
           <button
             type="button"
-            disabled={!authorClickable}
-            onClick={event => {
+            disabled={!author}
+            onClick={(event) => {
               event.stopPropagation();
-              if (!authorClickable) return;
-              onAuthorClick(authorName);
+              if (author) onAuthorClick(author);
             }}
-            className={clsx(
-              "text-xs font-semibold uppercase tracking-wide",
-              authorClickable
-                ? "text-white/70 underline-offset-2 hover:underline"
-                : "cursor-default text-white/60"
-            )}
+            className="pointer-events-auto mt-1 block max-w-full truncate text-xs text-slate-300 underline-offset-2 enabled:hover:text-white enabled:hover:underline"
           >
-            {displayAuthor}
+            by {author || 'Unknown'}
           </button>
-          <span className="text-xl font-bold text-white">{card.name}</span>
-          {card.tagline && <span className="line-clamp-2 text-sm text-white/80">{card.tagline}</span>}
-        </div>
-      </div>
-
-      <div
-        className="flex flex-1 cursor-pointer flex-col gap-4 p-5"
-        onClick={event => onCardTextClick(event, card, index)}
-      >
-        <div className="flex flex-wrap gap-2">
-          {card.topics.slice(0, 12).map((tag, tagIndex) => (
-            <button
-              key={`${card.id}-${tag}-${tagIndex}`}
-              onClick={event => {
-                event.stopPropagation();
-                onTagClick(tag);
-              }}
-              className={clsx(
-                "rounded-full px-3 py-1 text-xs font-medium transition",
-                highlightedTagsSet.has(tag.toLowerCase())
-                  ? "bg-indigo-600 text-white shadow-md"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700",
-              )}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-
-        {(card.hasAlternateGreetings || card.hasLorebook || card.hasGallery || card.hasEmbeddedImages || card.hasExpressions) && (
-          <div className="flex flex-wrap gap-2 text-xs">
-            {card.hasAlternateGreetings && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-200">
-                <Sparkles className="h-3 w-3" /> Alt greetings
-              </span>
-            )}
-            {card.hasLorebook && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-200">
-                <BookOpen className="h-3 w-3" /> Lorebook
-              </span>
-            )}
-            {card.hasGallery && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-3 py-1 font-medium text-teal-600 dark:bg-teal-500/20 dark:text-teal-200">
-                <Images className="h-3 w-3" /> Gallery
-              </span>
-            )}
-            {card.hasEmbeddedImages && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-3 py-1 font-medium text-orange-600 dark:bg-orange-500/20 dark:text-orange-200">
-                <ImageIcon className="h-3 w-3" /> Images
-              </span>
-            )}
-            {card.hasExpressions && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-3 py-1 font-medium text-purple-600 dark:bg-purple-500/20 dark:text-purple-200">
-                <Smile className="h-3 w-3" /> Expressions
-              </span>
-            )}
-          </div>
-        )}
-
-        <div className="flex gap-4 text-xs text-slate-500 dark:text-slate-400">
-          <div>
-            <span className="font-semibold">Updated</span>
-            <p>{card.lastModified}</p>
-          </div>
-          <div>
-            <span className="font-semibold">Language</span>
-            <p>{card.language}</p>
-          </div>
-          <div>
-            <span className="font-semibold">Visibility</span>
-            <p className="capitalize">{card.visibility}</p>
-          </div>
-          <div>
-            <span className="font-semibold">Creator</span>
-            <button
-              type="button"
-              disabled={!authorClickable}
-              onClick={event => {
-                event.stopPropagation();
-                if (!authorClickable) return;
-                onAuthorClick(authorName);
-              }}
-              className={clsx(
-                "ml-1 text-left",
-                authorClickable
-                  ? "text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-300"
-                  : "cursor-default text-slate-400 dark:text-slate-600"
-              )}
-            >
-              {displayAuthor}
-            </button>
-          </div>
-        </div>
-
-        {card.vectorMatch?.text && (
-          <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-3 text-sm text-slate-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-slate-100">
-            <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">
-              <Sparkles className="h-3 w-3" />
-              Semantic match
-              {card.vectorMatch.section && (
-                <span className="text-slate-500 normal-case dark:text-slate-400">
-                  {card.vectorMatch.section}
-                </span>
-              )}
-            </div>
-            <p className="line-clamp-3 whitespace-pre-line text-sm text-slate-700 dark:text-slate-100">
-              {card.vectorMatch.text}
+          {card.tagline && (
+            <p className="mt-1 hidden text-xs leading-relaxed text-slate-300 sm:line-clamp-2">
+              {card.tagline}
             </p>
+          )}
+        </div>
+        {card.topics.length > 0 && (
+          <div className="flex max-h-5 gap-1 overflow-hidden">
+            {card.topics.slice(0, 2).map((tag, tagIndex) => (
+              <button
+                key={`${tag}-${tagIndex}`}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onTagClick(tag);
+                }}
+                className={clsx(
+                  'pointer-events-auto max-w-[55%] truncate rounded px-1.5 py-0.5 text-[10px] font-medium',
+                  highlightedTagsSet.has(tag.toLowerCase())
+                    ? 'bg-indigo-500 text-white'
+                    : 'bg-white/10 text-slate-200 hover:bg-white/20',
+                )}
+              >
+                {tag}
+              </button>
+            ))}
+            {card.topics.length > 2 && (
+              <span className="shrink-0 py-0.5 text-[10px] text-slate-400">
+                +{card.topics.length - 2}
+              </span>
+            )}
           </div>
         )}
-        <div className="mt-auto flex flex-wrap items-center gap-2 text-slate-500 dark:text-slate-400">
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation();
-              onToggleFavorite(card);
-            }}
-            aria-label={card.favorited ? "Remove favorite" : "Add favorite"}
-            className={clsx(
-              "inline-flex h-10 w-10 items-center justify-center rounded-2xl border transition",
-              card.favorited
-                ? "border-red-200 text-red-500 dark:border-red-500/40 dark:text-red-300"
-                : "border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:hover:border-slate-600",
-            )}
+        {card.vectorMatch?.text && (
+          <p
+            className="line-clamp-2 border-l-2 border-indigo-400 pl-2 text-xs text-indigo-200"
+            title={card.vectorMatch.text}
           >
-            {card.favorited ? <Heart className="h-4 w-4 fill-current" /> : <Heart className="h-4 w-4" />}
-          </button>
-          {chubUrl ? (
-            <a
-              href={chubUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={event => event.stopPropagation()}
-              aria-label="Open on Chub"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:hover:border-slate-600"
-            >
-              <Globe className="h-4 w-4" />
-            </a>
-          ) : (
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-400 opacity-40 dark:border-slate-700">
-              <Globe className="h-4 w-4" />
+            <Sparkles className="mr-1 inline h-3 w-3" />
+            {card.vectorMatch.text}
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-1 border-t border-white/15 pt-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[10px] tabular-nums text-slate-300">
+            <span title="Stars" className="flex items-center gap-0.5">
+              <Star className="h-3 w-3 text-amber-300" />
+              {card.starCount || 0}
             </span>
-          )}
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation();
-              onDownload(card);
-            }}
-            aria-label="Download PNG"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:hover:border-slate-600"
-          >
-            <Download className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation();
-              onPushToSilly(card);
-            }}
-            aria-label="Push to Silly Tavern"
-            disabled={!canPushToSilly}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-emerald-200 text-emerald-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/40 dark:text-emerald-300 dark:hover:border-emerald-400"
-            title={canPushToSilly ? "Push to Silly Tavern" : "Configure Silly Tavern integration in settings"}
-          >
-            <Send className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation();
-              onCopyLink(card);
-            }}
-            aria-label="Copy image URL"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:hover:border-slate-600"
-          >
-            <Copy className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation();
-              onDelete(card);
-            }}
-            aria-label={`Delete ${card.name}`}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-red-200 text-red-500 transition hover:bg-red-50 dark:border-red-600/40 dark:text-red-300 dark:hover:bg-red-500/10"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+            <span title="Favorites" className="flex items-center gap-0.5">
+              <Heart className="h-3 w-3 text-rose-300" />
+              {card.n_favorites || 0}
+            </span>
+          </div>
+          <CardItemActions
+            card={card}
+            sourceUrl={chubUrl || card.sourceUrl || null}
+            canPushToSilly={canPushToSilly}
+            onToggleFavorite={onToggleFavorite}
+            onDownload={onDownload}
+            onPushToSilly={onPushToSilly}
+            onCopyLink={onCopyLink}
+            onDelete={onDelete}
+          />
         </div>
       </div>
     </div>
