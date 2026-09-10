@@ -4,13 +4,7 @@ import { Fragment, useState } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import {
     X,
-    Heart,
     Globe,
-    HeartOff,
-    RefreshCw,
-    Download,
-    Send,
-    Copy,
     Database,
     Loader2,
     Tag,
@@ -25,6 +19,7 @@ import {
 import Image from 'next/image';
 import clsx from 'clsx';
 import { CardArtwork } from './CardArtwork';
+import { CardDetailActions } from './CardDetailActions';
 import { TokenSummary } from './TokenSummary';
 import { CollapsibleSection, NestedSection, MarkdownContent } from './ContentSections';
 import type { Card, CachedAsset } from '@/lib/types';
@@ -199,7 +194,7 @@ export const CardModal = ({
                                 leaveFrom="translate-x-0"
                                 leaveTo="translate-x-full"
                             >
-                                <Dialog.Panel className="pointer-events-auto relative flex h-full w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-800 dark:bg-slate-950 sm:w-[90vw]">
+                                <Dialog.Panel className="pointer-events-auto relative flex h-full w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-800 dark:bg-slate-950 sm:w-[95vw]">
                                     <button
                                         onClick={closeCardDetails}
                                         aria-label="Close card details"
@@ -319,78 +314,19 @@ export const CardModal = ({
                                                                 </div>
                                                             )}
 
-                                                            <div className="flex flex-wrap gap-2">
-                                                                <button
-                                                                    onClick={() => toggleFavoriteCard(selectedCard)}
-                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                                                                >
-                                                                    {selectedCard.favorited ? (
-                                                                        <HeartOff className="h-4 w-4" />
-                                                                    ) : (
-                                                                        <Heart className="h-4 w-4" />
-                                                                    )}
-                                                                    {selectedCard.favorited ? 'Remove favorite' : 'Add favorite'}
-                                                                </button>
-                                                                {activeChubUrl && (
-                                                                    <a
-                                                                        href={activeChubUrl}
-                                                                        target="_blank"
-                                                                        rel="noreferrer"
-                                                                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-600"
-                                                                        aria-label="View on Chub"
-                                                                    >
-                                                                        <Globe className="h-4 w-4" />
-                                                                    </a>
-                                                                )}
-                                                                <button
-                                                                    onClick={() => handleRefreshCard(selectedCard)}
-                                                                    disabled={refreshingCardId === selectedCard.id}
-                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200"
-                                                                >
-                                                                    {refreshingCardId === selectedCard.id ? (
-                                                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                                                    ) : (
-                                                                        <RefreshCw className="h-4 w-4" />
-                                                                    )}
-                                                                    Update card
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => handleDownload(selectedCard)}
-                                                                    className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-2 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900"
-                                                                >
-                                                                    <Download className="h-4 w-4" /> Download PNG
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => handlePushToSilly(selectedCard)}
-                                                                    disabled={!canPushToSilly}
-                                                                    title={
-                                                                        canPushToSilly
-                                                                            ? 'Send this card to Silly Tavern'
-                                                                            : 'Enable Silly Tavern integration in settings first'
-                                                                    }
-                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-emerald-200 px-2 py-1.5 text-sm font-medium text-emerald-600 shadow-sm transition hover:border-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-600/40 dark:text-emerald-300"
-                                                                >
-                                                                    <Send className="h-4 w-4" /> Push to Silly Tavern
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => handlePushToArchitect(selectedCard)}
-                                                                    disabled={!canPushToArchitect}
-                                                                    title={
-                                                                        canPushToArchitect
-                                                                            ? 'Send this card to Character Architect'
-                                                                            : 'Configure Character Architect URL in settings first'
-                                                                    }
-                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-purple-200 px-2 py-1.5 text-sm font-medium text-purple-600 shadow-sm transition hover:border-purple-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-purple-600/40 dark:text-purple-300"
-                                                                >
-                                                                    <Send className="h-4 w-4" /> Push to Character Architect
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => handleCopyLink(selectedCard)}
-                                                                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-700 dark:text-slate-200"
-                                                                >
-                                                                    <Copy className="h-4 w-4" /> Copy image URL
-                                                                </button>
-                                                            </div>
+                                                            <CardDetailActions
+                                                                card={selectedCard}
+                                                                sourceUrl={activeChubUrl}
+                                                                refreshing={refreshingCardId === selectedCard.id}
+                                                                canPushToSilly={canPushToSilly}
+                                                                canPushToArchitect={canPushToArchitect}
+                                                                onFavorite={toggleFavoriteCard}
+                                                                onRefresh={handleRefreshCard}
+                                                                onDownload={handleDownload}
+                                                                onPushToSilly={handlePushToSilly}
+                                                                onPushToArchitect={handlePushToArchitect}
+                                                                onCopyLink={handleCopyLink}
+                                                            />
 
                                                             {/* Asset caching section - Hidden for now as manual caching is disabled/automatic
                                                             <div className="flex flex-wrap gap-2">
