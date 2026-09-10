@@ -1,5 +1,8 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import axios from 'axios';
 import extractChunks from 'png-chunks-extract';
 import encodeChunks from 'png-chunks-encode';
@@ -10,6 +13,17 @@ import { ensureSchema } from '../../db/schema.js';
 import { BaseScraper } from './BaseScraper.js';
 
 import { CtScraper } from './CtScraper.js';
+
+// Controller imports load configuration; keep that initialization out of the user's workspace.
+const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'character-archive-ct-test-'));
+const previousConfigFile = process.env.CHARACTER_ARCHIVE_CONFIG_FILE;
+process.env.CHARACTER_ARCHIVE_CONFIG_FILE = path.join(configDirectory, 'config.json');
+fs.writeFileSync(process.env.CHARACTER_ARCHIVE_CONFIG_FILE, JSON.stringify({ port: 6969 }));
+after(() => {
+    if (previousConfigFile === undefined) delete process.env.CHARACTER_ARCHIVE_CONFIG_FILE;
+    else process.env.CHARACTER_ARCHIVE_CONFIG_FILE = previousConfigFile;
+    fs.rmSync(configDirectory, { recursive: true, force: true });
+});
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 const AVATAR = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==', 'base64');
