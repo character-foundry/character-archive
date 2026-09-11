@@ -583,6 +583,9 @@ class CardController {
                 const advancedResult = await performAdvancedSearch(params);
 
                 if (advancedResult.fallback) {
+                    if (advancedResult.filterError) {
+                        return res.status(400).json({ error: advancedResult.fallbackReason });
+                    }
                     advancedInfo.fallbackReason = advancedResult.fallbackReason;
                 } else {
                     // Decorate and attach metadata

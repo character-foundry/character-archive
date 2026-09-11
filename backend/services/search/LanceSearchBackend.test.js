@@ -163,6 +163,48 @@ test('LanceDB applies documented Boolean query operators', async t => {
     await backend.close();
 });
 
+test('LanceDB preserves grouped filter negation and IN-list semantics', async t => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-filter-compat-'));
+    t.after(async () => rm(directory, { recursive: true, force: true }));
+    const backend = new LanceSearchBackend({ uri: directory, tableName: 'cards_test' });
+    await backend.rebuild([
+        document({ id: '1', source: 'ct', hasLorebook: true, tokenCount: 500 }),
+        document({ id: '2', source: 'ct', hasGallery: true, tokenCount: 1500 }),
+        document({ id: '3', name: 'Star: Pilot', author: 'Anonymous', source: 'chub', tags: ['fantasy'], tokenCount: 1800 }),
+        document({ id: '4', source: 'wyvern', tags: ['sci-fi'], tokenCount: 3000 })
+    ]);
+
+    const negated = await backend.searchLexical({
+        filter: 'NOT (hasLorebook = true OR hasGallery = true)',
+        limit: 10,
+        sort: null
+    });
+    assert.deepEqual(negated.ids, ['3', '4']);
+
+    const listed = await backend.searchLexical({
+        filter: 'source IN ["ct", "chub"] AND tags IN ["fantasy", "sci-fi"]',
+        limit: 10,
+        sort: null
+    });
+    assert.deepEqual(listed.ids, ['3']);
+
+    const ranged = await backend.searchLexical({
+        filter: 'tokenCount 1000 TO 2000 AND source NOT IN ["ct"]',
+        limit: 10,
+        sort: null
+    });
+    assert.deepEqual(ranged.ids, ['3']);
+
+    const textCase = await backend.searchLexical({
+        filter: 'author = "anonymous" AND name = "star: pilot"',
+        limit: 10,
+        sort: null
+    });
+    assert.deepEqual(textCase.ids, ['3']);
+
+    await backend.close();
+});
+
 test('LanceDB rebuild swaps an indexed shadow table only after the build succeeds', async t => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-swap-'));
     t.after(async () => rm(directory, { recursive: true, force: true }));

@@ -19,7 +19,14 @@ export async function fetchCards(params: Record<string, string | number | undefi
   const res = await fetch(url, { cache: 'no-store', signal });
   
   if (!res.ok) {
-    throw new Error('Failed to fetch cards');
+    let message = 'Failed to fetch cards';
+    try {
+      const payload = await res.json() as { error?: string };
+      if (payload?.error) message = payload.error;
+    } catch {
+      // Keep the generic message when the server does not return JSON.
+    }
+    throw new Error(message);
   }
   
   return res.json();

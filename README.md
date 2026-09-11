@@ -116,7 +116,7 @@ The application relies on a `config.json` file. The tracked loader creates it au
             }
         }
         ```
-        Change `backend` to `meilisearch` and enable the `meilisearch` config block to use the external provider. The `/api/cards` query parameters do not change. Portable filters support the documented comparison operators, `AND`/`OR`/`NOT`, parentheses, booleans, numbers, strings, and tag membership; raw Meilisearch-only filter expressions are not portable to LanceDB.
+        Change `backend` to `meilisearch` and enable the `meilisearch` config block to use the external provider. The `/api/cards` query parameters do not change. Portable filters support comparison operators, `AND`/`OR`/`NOT`, parentheses, booleans, numbers, strings, tag membership, `IN`/`NOT IN` lists, inclusive `TO` ranges, and `EXISTS`; raw provider-specific expressions are not portable between backends.
 
     *   **Vector Search:**
         ```json

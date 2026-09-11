@@ -346,6 +346,13 @@ export async function performAdvancedSearch(params) {
         };
     } catch (error) {
         log.error('Advanced search failure', error);
+        if (params.advancedFilter?.trim()) {
+            return {
+                fallback: true,
+                filterError: true,
+                fallbackReason: `Invalid advanced filter: ${error?.message || 'filter could not be applied'}`
+            };
+        }
         return {
             fallback: true,
             fallbackReason: error?.message || 'Advanced search failed. Falling back to basic search.'

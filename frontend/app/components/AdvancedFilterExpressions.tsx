@@ -107,6 +107,16 @@ export function AdvancedFilterExpressions({ value, onChange }: AdvancedFilterExp
                           </code>
                         </li>
                         <li>
+                          Lists and ranges:{' '}
+                          <code className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-indigo-800 shadow-sm dark:bg-slate-900 dark:text-indigo-200">
+                            source IN [&quot;ct&quot;, &quot;chub&quot;]
+                          </code>{' '}
+                          or{' '}
+                          <code className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-indigo-800 shadow-sm dark:bg-slate-900 dark:text-indigo-200">
+                            tokenCount 1000 TO 5000
+                          </code>
+                        </li>
+                        <li>
                           Text fields:{' '}
                           <code className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-indigo-800 shadow-sm dark:bg-slate-900 dark:text-indigo-200">
                             author = &quot;anonymous&quot;
