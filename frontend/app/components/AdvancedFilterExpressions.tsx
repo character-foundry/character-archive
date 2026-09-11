@@ -48,8 +48,8 @@ export function AdvancedFilterExpressions({ value, onChange }: AdvancedFilterExp
                   </Disclosure.Button>
                   <Disclosure.Panel className="mt-2 space-y-3 text-left break-words">
                     <p>
-                      Colon syntax (tags:lightsaber) is accepted and converted for the selected
-                      search backend.
+                      This field accepts text queries such as cute OR funny and field filters such
+                      as tags:lightsaber or tokenCount &gt; 1000.
                     </p>
                     <div className="space-y-2">
                       <p className="font-semibold text-indigo-700 dark:text-indigo-300">

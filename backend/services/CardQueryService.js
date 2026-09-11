@@ -34,6 +34,18 @@ import { logger } from '../utils/logger.js';
 
 const log = logger.scoped('CARD-QUERY');
 
+function hasFilterSyntax(value) {
+    const expression = String(value || '').replace(
+        /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,
+        '""'
+    );
+    return Boolean(
+        /\b[a-zA-Z_][\w.-]*\s*(?:[!<>=]|:)/.test(expression)
+        || /\b[a-zA-Z_][\w.-]*\s+(?:NOT\s+)?(?:IN|EXISTS)\b/i.test(expression)
+        || /\b[a-zA-Z_][\w.-]*\s+-?\d+(?:\.\d+)?\s+TO\b/i.test(expression)
+    );
+}
+
 /**
  * Parse and normalize query parameters from request
  */
@@ -219,8 +231,11 @@ export async function performAdvancedSearch(params) {
         };
     }
 
+    const advancedInput = params.advancedFilter?.trim() || '';
+    const advancedInputIsFilter = hasFilterSyntax(advancedInput);
+    const advancedQueryText = advancedInput && !advancedInputIsFilter ? advancedInput : '';
     const meiliFilterExpression = buildMeilisearchFilter({
-        advancedFilter: params.advancedFilter,
+        advancedFilter: advancedInputIsFilter ? advancedInput : '',
         include: params.include,
         exclude: params.exclude,
         tagMatchMode: params.tagMatchMode,
@@ -239,7 +254,7 @@ export async function performAdvancedSearch(params) {
         hasExpressions: params.hasExpressions
     });
 
-    const queryText = params.advancedText || params.query || '';
+    const queryText = params.advancedText || params.query || advancedQueryText;
     const hasQueryText = Boolean(queryText.trim());
     const hasAnyFilter = Boolean(meiliFilterExpression && meiliFilterExpression.trim().length > 0);
 
@@ -346,11 +361,11 @@ export async function performAdvancedSearch(params) {
         };
     } catch (error) {
         log.error('Advanced search failure', error);
-        if (params.advancedFilter?.trim()) {
+        if (advancedInput) {
             return {
                 fallback: true,
                 filterError: true,
-                fallbackReason: `Invalid advanced filter: ${error?.message || 'filter could not be applied'}`
+                fallbackReason: `Invalid advanced ${advancedInputIsFilter ? 'filter' : 'query'}: ${error?.message || 'expression could not be applied'}`
             };
         }
         return {

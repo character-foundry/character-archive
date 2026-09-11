@@ -62,6 +62,15 @@ test('advanced card search keeps its public contract when LanceDB is selected', 
         assert.equal(result.total, 1);
         assert.deepEqual(result.cards.map(card => String(card.id)), ['1']);
 
+        const textExpression = await performAdvancedSearch(parseListParams({
+            advanced: 'true',
+            advancedFilter: 'wizard',
+            limit: '20'
+        }));
+        assert.equal(textExpression.mode, 'lexical');
+        assert.deepEqual(textExpression.cards.map(card => String(card.id)), ['1']);
+        assert.equal(textExpression.appliedFilter, '');
+
         const listedFilter = await performAdvancedSearch(parseListParams({
             advanced: 'true',
             advancedFilter: 'source IN ["ct", "chub"] AND tokenCount >= 2000',
