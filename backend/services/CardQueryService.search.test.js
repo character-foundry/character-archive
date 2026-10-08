@@ -150,8 +150,9 @@ test('advanced card search keeps its public contract when LanceDB is selected', 
         assert.equal(pageOne.total, pageTwo.total);
         assert.notEqual(pageOne.cards[0].id, pageTwo.cards[0].id);
         await search.upsertSearchDocuments([{ id: '5', name: 'Heroes Party newcomer' }]);
-        await performAdvancedSearch(parseListParams({ advanced: 'true', query: 'heroes party' }));
-        assert.equal(embeddingRequests, 2, 'index updates invalidate cached searches');
+        const refreshed = await performAdvancedSearch(parseListParams({ advanced: 'true', query: 'heroes party' }));
+        assert.ok(refreshed.lexicalResult.ids.includes('5'), 'index updates invalidate cached search results');
+        assert.equal(embeddingRequests, 1, 'unchanged query embeddings survive index updates');
         const phrase = await performAdvancedSearch(parseListParams({ advanced: 'true', query: '"heroes party"' }));
         assert.equal(phrase.mode, 'lexical');
         const boolean = await performAdvancedSearch(parseListParams({ advanced: 'true', query: 'heroes AND party' }));

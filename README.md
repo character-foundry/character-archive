@@ -335,4 +335,6 @@ Search maintenance compacts the lexical LanceDB table and updates its full-text
 index every 30 minutes (`SEARCH_MAINTENANCE_INTERVAL_MS`). Run `pnpm search:maintain`
 for immediate maintenance. Search results and filtered counts are cached for up
 to one minute, including concurrent requests; live integration status remains
-independent. LanceDB readers check for changes from other workers every second.
+independent. Query embeddings are cached separately for five minutes, so changing
+filters or refreshing candidates does not repeat inference for the same query.
+Fresh query embedding requests have a 15-second timeout. LanceDB readers check for changes from other workers every second.

@@ -141,6 +141,7 @@ export class LanceSearchBackend {
         this.vectorConfig = { ...vectorConfig };
         this.embeddingRequest = embeddingRequest;
         this.countCache = new AsyncResultCache();
+        this.embeddingCache = new AsyncResultCache({ ttlMs: 300000 });
         this.connection = null;
         this.table = null;
         this.activeTableName = null;
@@ -449,19 +450,23 @@ export class LanceSearchBackend {
         if (!queryText) throw new Error('Vector search requires a query string');
         const embeddingText = formatEmbeddingQuery(queryText, this.vectorConfig.queryInstruction);
         const dimensions = Number(this.vectorConfig.embedDimensions);
-        const vectors = await this.embeddingRequest({
-            provider: this.vectorConfig.embeddingProvider || 'ollama',
-            baseUrl: this.vectorConfig.embeddingUrl || this.vectorConfig.ollamaUrl,
-            apiKey: this.vectorConfig.embeddingApiKey || '',
-            model: this.vectorConfig.embedModel,
-            texts: [embeddingText],
-            dimensions,
-            normalize: true
+        const queryVector = await this.embeddingCache.get(embeddingText, async () => {
+            const vectors = await this.embeddingRequest({
+                provider: this.vectorConfig.embeddingProvider || 'ollama',
+                baseUrl: this.vectorConfig.embeddingUrl || this.vectorConfig.ollamaUrl,
+                apiKey: this.vectorConfig.embeddingApiKey || '',
+                model: this.vectorConfig.embedModel,
+                texts: [embeddingText],
+                dimensions,
+                normalize: true,
+                signal: AbortSignal.timeout(15000)
+            });
+            const vector = vectors?.[0];
+            if (!Array.isArray(vector) || vector.length !== dimensions) {
+                throw new Error(`Embedding service returned an invalid ${dimensions}d query vector`);
+            }
+            return vector;
         });
-        const queryVector = vectors?.[0];
-        if (!Array.isArray(queryVector) || queryVector.length !== dimensions) {
-            throw new Error(`Embedding service returned an invalid ${dimensions}d query vector`);
-        }
         const table = await this.openVectorTable();
         this.vectorAvailable = true;
         const appliedFilter = compileLanceFilter(filter);
