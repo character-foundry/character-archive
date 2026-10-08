@@ -22,3 +22,8 @@ export function drainDecision({ enabled = false, worked = false, generation = nu
         + Number(generation.running_items || 0);
     return pending === 0 ? 'complete' : 'wait';
 }
+
+// Service outages must not exhaust the retry budget of otherwise valid cards.
+export function isTransientVectorFailure(error) {
+    return /fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|TimeoutError|AbortError|timed out|embedding request failed: (?:408|429|5\d\d)\b/i.test(error?.message || String(error));
+}

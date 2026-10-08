@@ -107,10 +107,9 @@ services:
 
   vector-worker:
     <<: *app
-    profiles: [vector]
     container_name: character-vector-worker
-    command: ["node", "scripts/vector-worker.js", "--drain"]
-    restart: "no"
+    command: ["node", "scripts/vector-worker.js"]
+    restart: unless-stopped
     environment:
       <<: *app-environment
       VECTOR_WORKER_BATCH_SIZE: ${VECTOR_WORKER_BATCH_SIZE:-100}
@@ -124,6 +123,21 @@ services:
         condition: service_healthy
     mem_limit: 8g
     memswap_limit: 8g
+    healthcheck:
+      disable: true
+
+  search-maintenance:
+    <<: *app
+    container_name: character-search-maintenance
+    command: ["node", "scripts/search-maintenance.js"]
+    environment:
+      <<: *app-environment
+      SEARCH_MAINTENANCE_INTERVAL_MS: ${SEARCH_MAINTENANCE_INTERVAL_MS:-1800000}
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 4g
+    memswap_limit: 4g
     healthcheck:
       disable: true
 

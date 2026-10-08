@@ -268,7 +268,7 @@ test('LanceDB vector search uses the same filters and response contract', async 
     ]);
     const vectorTable = await backend.openVectorTable();
     assert.ok((await vectorTable.listVersions()).length > 1);
-    const optimizeStats = await backend.optimizeVector({ cleanupOlderThan: new Date(), deleteUnverified: true });
+    const optimizeStats = await backend.optimizeVector({ cleanupOlderThan: new Date(Date.now() + 1000), deleteUnverified: true });
     assert.ok(optimizeStats.prune.oldVersionsRemoved > 0);
     assert.equal((await vectorTable.listVersions()).length, 1);
     assert.equal(await vectorTable.countRows(), 3);
@@ -312,4 +312,32 @@ test('LanceDB vector index finalization reuses an existing HNSW index', async t 
     assert.deepEqual(await backend.ensureVectorIndex(), { created: true, optimized: false });
     assert.deepEqual(await backend.ensureVectorIndex(), { created: false, optimized: false });
     await backend.close();
+});
+
+test('filtered pagination shares counts and observes writes from another connection', async t => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'character-archive-lance-count-'));
+    t.after(async () => rm(directory, { recursive: true, force: true }));
+    const reader = new LanceSearchBackend({ uri: directory });
+    const writer = new LanceSearchBackend({ uri: directory });
+    t.after(() => reader.close());
+    t.after(() => writer.close());
+    await writer.rebuild([
+        document({ id: '1', name: 'First', tokenCount: 100 }),
+        document({ id: '2', name: 'Second', tokenCount: 200 })
+    ]);
+    const table = await reader.open();
+    let counts = 0;
+    const countRows = table.countRows.bind(table);
+    table.countRows = (...args) => { counts++; return countRows(...args); };
+    const first = await reader.searchLexical({ filter: 'tokenCount >= 100', page: 1, limit: 1 });
+    const second = await reader.searchLexical({ filter: 'tokenCount >= 100', page: 2, limit: 1 });
+    assert.equal(counts, 1);
+    assert.equal(first.total, 2);
+    assert.equal(second.total, 2);
+    assert.notDeepEqual(first.ids, second.ids);
+    await writer.upsertDocuments([document({ id: '3', name: 'Third', tokenCount: 300 })]);
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    const updated = await reader.searchLexical({ filter: 'tokenCount >= 100', limit: 10 });
+    assert.equal(updated.total, 3);
+    assert.equal(counts, 2);
 });

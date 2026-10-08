@@ -7,6 +7,7 @@ import { Bool, Field, FixedSizeList, Float32, Float64, List, Schema, Utf8 } from
 import { logger } from '../../utils/logger.js';
 import { formatEmbeddingQuery, requestEmbeddings } from '../EmbeddingClient.js';
 import { evaluateBooleanQuery, parseBooleanQuery } from './boolean-query.js';
+import { AsyncResultCache } from './AsyncResultCache.js';
 import { compileLanceFilter } from './lance-filter.js';
 
 const log = logger.scoped('SEARCH:LANCE');
@@ -139,6 +140,7 @@ export class LanceSearchBackend {
         this.vectorTableName = cleanString(vectorTableName) || 'card_vectors';
         this.vectorConfig = { ...vectorConfig };
         this.embeddingRequest = embeddingRequest;
+        this.countCache = new AsyncResultCache();
         this.connection = null;
         this.table = null;
         this.activeTableName = null;
@@ -177,7 +179,7 @@ export class LanceSearchBackend {
         if (!this.enabled) throw new Error('LanceDB search path is not configured');
         if (!this.connection) {
             await fs.mkdir(this.uri, { recursive: true });
-            this.connection = await lancedb.connect(this.uri);
+            this.connection = await lancedb.connect(this.uri, { readConsistencyInterval: 1 });
         }
         return this.connection;
     }
@@ -372,7 +374,9 @@ export class LanceSearchBackend {
             };
         }
 
-        const total = await table.countRows(appliedFilter || undefined);
+        const version = await table.version();
+        const total = await this.countCache.get(JSON.stringify([this.activeTableName, version, appliedFilter]),
+            () => table.countRows(appliedFilter || undefined));
         let query = table.query().select(['id']);
         if (appliedFilter) query = query.where(appliedFilter);
         const sortRules = typeof sort === 'string' ? (SORT_MAP[sort] || SORT_MAP.new) : null;

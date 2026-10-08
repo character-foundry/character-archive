@@ -3,10 +3,13 @@ import path from 'node:path';
 import { getDatabase } from '../database.js';
 import { logger } from '../utils/logger.js';
 import * as meili from './search-index.js';
+import { AsyncResultCache } from './search/AsyncResultCache.js';
 import { LanceSearchBackend } from './search/LanceSearchBackend.js';
 
 const log = logger.scoped('SEARCH:SERVICE');
 const DEFAULT_STATE_DIR = process.env.CHARACTER_ARCHIVE_STATE_DIR || process.cwd();
+
+const resultCache = new AsyncResultCache();
 
 let activeProvider = 'disabled';
 let lanceBackend = null;
@@ -54,6 +57,7 @@ export async function assertSearchBackendReady(config = {}) {
 }
 
 export function configureSearchBackend(config = {}) {
+    resultCache.clear();
     const previousLanceBackend = lanceBackend;
     lanceBackend = null;
     previousLanceBackend?.close().catch(error => log.warn('Failed to close the previous LanceDB connection', error));
@@ -96,24 +100,32 @@ export async function ensureVectorBackend() {
 }
 
 export async function searchLexicalCards(options = {}) {
-    if (activeProvider === 'lancedb') return lanceBackend.searchLexical(options);
+    if (activeProvider === 'lancedb') return resultCache.get(JSON.stringify(['lexical', options]), () => lanceBackend.searchLexical(options));
     if (activeProvider === 'meilisearch') return meili.searchMeilisearchCards(options);
     throw new Error('Advanced search is not enabled');
 }
 
 export async function searchVectorCards(options = {}) {
-    if (activeProvider === 'lancedb') return lanceBackend.searchVector(options);
+    if (activeProvider === 'lancedb') return resultCache.get(JSON.stringify(['vector', options]), () => lanceBackend.searchVector(options));
     if (activeProvider === 'meilisearch') return meili.searchVectorCards(options);
     throw new Error('Vector search is not enabled');
 }
 
 export async function upsertSearchDocuments(documents = []) {
-    if (activeProvider === 'lancedb') return lanceBackend.upsertDocuments(documents);
+    resultCache.clear();
+    if (activeProvider === 'lancedb') {
+        try { return await lanceBackend.upsertDocuments(documents); }
+        finally { resultCache.clear(); }
+    }
     if (activeProvider === 'meilisearch') return meili.indexDocuments(documents);
 }
 
 export async function deleteSearchDocuments(ids = []) {
-    if (activeProvider === 'lancedb') return lanceBackend.deleteDocumentsByIds(ids);
+    resultCache.clear();
+    if (activeProvider === 'lancedb') {
+        try { return await lanceBackend.deleteDocumentsByIds(ids); }
+        finally { resultCache.clear(); }
+    }
     if (activeProvider === 'meilisearch') return meili.deleteDocumentsByIds(ids);
 }
 
@@ -145,6 +157,7 @@ export async function processIndexQueue({ batchSize = 500 } = {}) {
 }
 
 export async function rebuildSearchIndexFromRows(rows = []) {
+    resultCache.clear();
     const documents = Array.isArray(rows) ? rows.map(meili.buildSearchDocumentFromRow).filter(Boolean) : [];
     if (activeProvider === 'lancedb') return lanceBackend.rebuild(documents);
     if (activeProvider === 'meilisearch') return meili.rebuildSearchIndexFromRows(rows);
@@ -164,6 +177,7 @@ async function* searchDocumentBatches(database, batchSize) {
 }
 
 export async function rebuildSearchIndexFromDatabase({ batchSize } = {}) {
+    resultCache.clear();
     if (!isSearchIndexEnabled()) throw new Error('Advanced search is not enabled');
     const database = getDatabase();
     const resolvedBatchSize = Math.max(100, Number(batchSize || lanceBackend?.batchSize || 1000));

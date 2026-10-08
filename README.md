@@ -261,7 +261,7 @@ To ensure your archive is truly offline:
     ```bash
     curl -X POST http://127.0.0.1:6969/api/vector/reconcile \
       -H 'content-type: application/json' -d '{}'
-    pnpm worker:vector
+    pnpm worker:vector:drain
     ```
     Set `embeddingProvider` to `ollama` or `openai`, and set `embeddingUrl`, `embeddingApiKey`, and `embedModel` for that endpoint. Instruction-aware retrieval models can set `queryInstruction`; it is applied to searches only, never to indexed card documents. `ollamaUrl` remains supported for older configs.
 
@@ -321,3 +321,18 @@ pnpm dev 2>&1 | grep '\[SYNC\]'
 *   **Embedded search:** `search.lance/` - LanceDB lexical and vector tables.
 
 **Note:** All user data is git-ignored. You can safely pull updates to the code without overwriting your library.
+
+### Search maintenance and embedding recovery
+
+The default Compose stack runs a continuous vector worker and search-maintenance
+worker. New embedding jobs are processed automatically; temporary network errors,
+rate limits, and server outages pause processing without consuming a card's retry
+budget. Permanent failures still become dead jobs after five attempts and are
+visible at `/api/vector/status`. Run `pnpm worker:vector:drain` for a finite snapshot
+instead of the continuous worker.
+
+Search maintenance compacts the lexical LanceDB table and updates its full-text
+index every 30 minutes (`SEARCH_MAINTENANCE_INTERVAL_MS`). Run `pnpm search:maintain`
+for immediate maintenance. Search results and filtered counts are cached for up
+to one minute, including concurrent requests; live integration status remains
+independent. LanceDB readers check for changes from other workers every second.
