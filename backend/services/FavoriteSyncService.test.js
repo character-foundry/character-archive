@@ -15,6 +15,7 @@ const { appConfig } = await import('./ConfigState.js');
 const { readFavorite, saveFavorite, linkArchitectCard, reconcileFavorites } = await import('./FavoriteSyncService.js');
 const { cardController } = await import('../controllers/CardController.js');
 const { pushDirect } = await import('./DirectConnectionsService.js');
+const { decorateCards, fetchIntegrationStatus } = await import('./CardQueryService.js');
 
 function setup(t) {
     const db = createConnection(':memory:');
@@ -107,6 +108,11 @@ test('starring an unlinked card uploads it once and synchronizes its star', asyn
     assert.equal(uploads, 1);
     assert.equal(remoteState.favorite, true);
     assert.equal(db.prepare('SELECT remote_id FROM architect_links WHERE card_id=91').get().remote_id, 'auto-91');
+    const { architectSyncedSet } = await fetchIntegrationStatus({}, '');
+    const listed = [{ id: 91, name: 'Test' }, { id: 92, name: 'Test' }];
+    decorateCards(listed, '', null, architectSyncedSet);
+    assert.equal(listed[0].syncedToArchitect, true);
+    assert.equal(listed[1].syncedToArchitect, false, 'A shared name must not mark an unrelated card as synced');
     await pushDirect(91, 'architect');
     await reconcileFavorites();
     assert.equal(uploads, 1, 'Sending or polling an already linked card must not make duplicates');

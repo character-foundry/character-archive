@@ -67,6 +67,15 @@ export async function linkArchitectCard(cardId, baseUrl, remoteId) {
     // Import the source's current star once, then exchange explicit changes in either direction.
     const current = readFavorite(cardId);
     if (!current.updatedAt) await saveFavorite(cardId, current.favorite);
+    invalidateCache();
+}
+
+export function linkedArchitectCardIds() {
+    ensureFavoriteTables();
+    if (!appConfig.characterArchitect?.url || appConfig.characterArchitect.enabled === false) return new Set();
+    const baseUrl = instanceApiUrl(appConfig.characterArchitect.url, '').replace(/\/$/, '');
+    return new Set(getDatabase().prepare('SELECT card_id FROM architect_links WHERE base_url = ?').all(baseUrl)
+        .map(row => String(row.card_id)));
 }
 
 /** Share one upload between automatic favorites and simultaneous manual sends. */

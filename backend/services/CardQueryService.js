@@ -25,7 +25,7 @@ import {
 } from './SearchService.js';
 import { cacheService } from './CacheService.js';
 import { sillyTavernService } from './SillyTavernService.js';
-import { getRemoteCardNames } from './FederationService.js';
+import { linkedArchitectCardIds } from './FavoriteSyncService.js';
 import { appConfig } from './ConfigState.js';
 import { buildMeilisearchFilter } from '../utils/searchUtils.js';
 import { fuseHybridSearchIds, prioritizeLiteralTitleMatches } from './hybrid-ranking.js';
@@ -145,7 +145,7 @@ export function decorateCards(cards, baseUrl, sillyLoadedSet, architectSyncedSet
         card.imagePath = imagePath;
         card.silly_link = `${baseUrl}${imagePath}`;
         card.loadedInSillyTavern = sillySet ? sillySet.has(String(card.id)) : false;
-        card.syncedToArchitect = architectSet ? architectSet.has((card.name || '').toLowerCase()) : false;
+        card.syncedToArchitect = architectSet ? architectSet.has(String(card.id)) : false;
     });
 }
 
@@ -180,9 +180,9 @@ export async function fetchIntegrationStatus(params, cookieHeader) {
     let architectSyncedSet = null;
     let allowedIds = null;
 
-    // Fetch architect card names via federation
+    // Direct sends record stable card IDs, without querying federation or matching names.
     try {
-        architectSyncedSet = await getRemoteCardNames('architect');
+        architectSyncedSet = linkedArchitectCardIds();
     } catch (error) {
         log.warn('Failed to fetch architect cards', error.message);
     }
