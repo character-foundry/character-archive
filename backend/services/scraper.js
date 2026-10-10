@@ -6,7 +6,7 @@ import extractChunks from 'png-chunks-extract';
 import encodeChunks from 'png-chunks-encode';
 import textChunk from 'png-chunk-text';
 import { analyzePng, analyzeExistingPng, isPngSuspect, detectFuzzPattern } from '../utils/png-utils.js';
-import { countImages } from '@character-foundry/image-utils';
+import { countImages } from '@character-foundry/character-foundry/image-utils';
 import { upsertCard, getDatabase } from '../database.js';
 import { resolveTokenCountsFromMetadata, mergeTokenCounts } from '../utils/token-counts.js';
 import { logger } from '../utils/logger.js';

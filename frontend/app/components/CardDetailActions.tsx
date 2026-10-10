@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Copy, Download, Globe, Heart, Loader2, RefreshCw, Send } from 'lucide-react';
 import clsx from 'clsx';
 import type { Card } from '@/lib/types';
@@ -34,6 +35,19 @@ export function CardDetailActions({
   onPushToArchitect,
   onCopyLink,
 }: CardDetailActionsProps) {
+  const [lumiverseStatus, setLumiverseStatus] = useState('');
+  const [sendingLumiverse, setSendingLumiverse] = useState(false);
+  async function sendToLumiverse() {
+    setSendingLumiverse(true);
+    setLumiverseStatus('');
+    try {
+      const response = await fetch(`/api/cards/${encodeURIComponent(card.id)}/push-to-lumiverse`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Send failed');
+      setLumiverseStatus('Sent to Lumiverse');
+    } catch (error) { setLumiverseStatus(error instanceof Error ? error.message : 'Send failed'); }
+    finally { setSendingLumiverse(false); }
+  }
   const favoriteLabel = card.favorited ? 'Remove favorite' : 'Add favorite';
   return (
     <div role="group" aria-label="Card actions" className="flex flex-wrap items-center gap-1.5">
@@ -116,6 +130,10 @@ export function CardDetailActions({
       >
         <Send className="h-4 w-4" /> Character Architect
       </button>
+      <button type="button" disabled={sendingLumiverse} onClick={sendToLumiverse} className={`${buttonClass} ${neutralClass} px-2`}>
+        <Send className="h-4 w-4" /> {sendingLumiverse ? 'Sending…' : 'Lumiverse'}
+      </button>
+      {lumiverseStatus && <span role="status" className="text-xs">{lumiverseStatus}</span>}
       <button
         type="button"
         onClick={() => onCopyLink(card)}

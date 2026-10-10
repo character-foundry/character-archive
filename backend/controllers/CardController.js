@@ -9,6 +9,8 @@
  * - scraper: card refresh
  */
 
+import { pushDirect } from '../services/DirectConnectionsService.js';
+import { readFavorite, saveFavorite, reconcileFavorites } from '../services/FavoriteSyncService.js';
 import { appConfig } from '../services/ConfigState.js';
 import { sillyTavernService } from '../services/SillyTavernService.js';
 import { federationService } from '../services/FederationService.js';
@@ -19,7 +21,6 @@ const log = logger.scoped('CARD');
 import {
     LANGUAGE_MAPPING,
     getDatabase,
-    toggleFavorite,
     deleteCard as dbDeleteCard
 } from '../database.js';
 
@@ -46,16 +47,13 @@ import { getCardFilePaths } from '../utils/card-utils.js';
 import { refreshCard } from '../services/scraper.js';
 import { refreshRisuCard } from '../services/scrapers/RisuAiScraper.js';
 import { refreshCtCard } from '../services/scrapers/CtScraper.js';
+import { exportCtWyvernPng } from '../services/CtWyvernPngExportService.js';
 import {
-    setCardGalleryFlag,
-    setCardFavoriteFlag,
     refreshGalleryIfNeeded
 } from '../services/CardService.js';
 import { syncFavoriteToChub } from '../services/SyncService.js';
 import {
     clearCardAssets,
-    cacheGalleryAssets,
-    getGalleryAssets,
     rewriteCardUrls
 } from '../services/asset-cache.js';
 
@@ -125,51 +123,27 @@ class CardController {
         }
     };
 
+    favoriteStatus = (req, res) => {
+        const ids = String(req.query.ids || '').split(',').filter(id => /^\d+$/.test(id)).slice(0, 100);
+        if (!ids.length) return res.json({ cards: [] });
+        const rows = getDatabase().prepare(`SELECT id, favorited FROM cards WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+        res.json({ cards: rows });
+    };
+
     toggleFavorite = async (req, res) => {
         try {
-            const cardId = parseInt(req.params.cardId);
-            const database = getDatabase();
-            const cardSourceInfo = database.prepare('SELECT id, source, sourceId FROM cards WHERE id = ?').get(cardId);
-            const result = toggleFavorite(cardId);
-
-            if (!result.success) {
-                return res.json(result);
+            const cardId = req.params.cardId;
+            const row = getDatabase().prepare('SELECT id, source, sourceId, hasGallery FROM cards WHERE id = ?').get(cardId);
+            if (!row) return res.status(404).json({ success: false, error: 'Card not found' });
+            const state = await saveFavorite(cardId, !readFavorite(cardId).favorite);
+            // Remote failures must never prevent the local star from being saved.
+            void reconcileFavorites().catch(error => log.warn('Favorite sync pending', error.message));
+            if (appConfig.syncFavoritesToChub === true) {
+                void syncFavoriteToChub(row, state.favorite).catch(error => log.warn('Chub favorite sync failed', error.message));
             }
-
-            const isFavorited = result.favorited === 1;
-            await setCardFavoriteFlag(cardId, isFavorited);
-            await syncFavoriteToChub(cardSourceInfo, isFavorited);
-
-            let hasGallery = false;
-            let galleryResult = null;
-
-            if (isFavorited) {
-                galleryResult = await cacheGalleryAssets(cardId, appConfig.chubApiKey);
-
-                if (galleryResult?.success !== false) {
-                    const cachedCount = galleryResult?.cached || 0;
-                    const skippedCount = galleryResult?.skipped || 0;
-                    hasGallery = (cachedCount + skippedCount) > 0;
-                } else {
-                    const existingGallery = await getGalleryAssets(cardId);
-                    hasGallery = existingGallery.success && existingGallery.assets.length > 0;
-                    if (galleryResult) {
-                        galleryResult.assets = existingGallery.assets;
-                    }
-                }
-
-                await setCardGalleryFlag(cardId, hasGallery);
-            } else {
-                galleryResult = await clearCardAssets(cardId, { assetType: 'gallery' });
-                await setCardGalleryFlag(cardId, false);
-            }
-
-            invalidateCache();
-
-            res.json({ ...result, hasGallery, gallery: galleryResult });
+            res.json({ success: true, favorited: state.favorite ? 1 : 0, hasGallery: !!row.hasGallery });
         } catch (error) {
-            log.error('Toggle favorite error', error);
-            res.status(500).json({ success: false, message: error.message });
+            res.status(500).json({ success: false, error: error.message });
         }
     };
 
@@ -336,6 +310,10 @@ class CardController {
             } else if (format === 'charx' && hasCharx) {
                 res.download(charxPath, `${cardId}.charx`);
             } else {
+                const png = await exportCtWyvernPng(cardId, req.query.useLocal === 'true');
+                if (png) {
+                    return res.attachment(`${cardId}.png`).type('image/png').send(png);
+                }
                 const useLocal = req.query.useLocal !== 'false';
                 const result = await rewriteCardUrls(cardId, useLocal);
                 res.json(result);
@@ -495,55 +473,19 @@ class CardController {
 
     pushToArchitect = async (req, res) => {
         try {
-            const cardId = req.params.cardId;
-            const cardIdStr = String(cardId);
-
-            // Try federation first
-            const architectPlatform = federationService.getPlatformConfig('architect');
-            if (architectPlatform?.enabled && architectPlatform?.base_url) {
-                try {
-                    const result = await federationService.pushToArchitect(cardId);
-                    return res.json({
-                        success: true,
-                        method: 'federation',
-                        remoteId: result.remoteId,
-                        message: `Pushed via federation to ${architectPlatform.base_url}`
-                    });
-                } catch (fedError) {
-                    log.warn('Federation push to Architect failed:', fedError.message);
-                }
-            }
-
-            // Legacy method
-            const architectUrl = appConfig.characterArchitect?.url || 'http://localhost:3456';
-            const { pngPath } = getCardFilePaths(cardIdStr);
-
-            if (!fs.existsSync(pngPath)) {
-                return res.status(404).json({ success: false, error: 'Card PNG file not found' });
-            }
-
-            const baseUrl = `${req.protocol}://${req.get('host')}`;
-            const publicUrl = `${baseUrl}/static/${cardIdStr.substring(0, 2)}/${cardIdStr}.png`;
-
-            const response = await axios.post(
-                `${architectUrl}/api/import-url`,
-                { url: publicUrl },
-                { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
-            );
-
-            res.json({
-                success: true,
-                method: 'legacy',
-                message: response.status === 201 ? 'Card pushed successfully' : 'Card pushed with non-standard response',
-                architectResponse: response.data
-            });
+            res.json(await pushDirect(req.params.cardId, 'architect'));
         } catch (error) {
-            log.error('Push to Architect failed', error);
-            let errorMessage = error.message;
-            if (error.code === 'ECONNREFUSED') {
-                errorMessage = 'Character Architect is not running or not accessible';
-            }
-            res.status(500).json({ success: false, error: errorMessage });
+            res.status(502).json({ success: false, error: error.response?.data?.error || error.message });
+        }
+    };
+
+    pushToLumiverse = async (req, res) => {
+        try {
+            res.json(await pushDirect(req.params.cardId, 'lumiverse'));
+        } catch (error) {
+            res.status(502).json({ success: false, error: error.response?.status === 401
+                ? 'Lumiverse session expired. Update the session token or cookie in Settings.'
+                : error.response?.data?.error || error.message });
         }
     };
 

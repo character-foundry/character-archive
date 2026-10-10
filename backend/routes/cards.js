@@ -18,6 +18,7 @@ const refreshLimiter = rateLimit({
 
 // Define card routes
 router.get('/', cardController.listCards);
+router.get('/favorite-status', cardController.favoriteStatus);
 router.get('/:cardId/png-info', cardController.getPngInfo);
 router.get('/:cardId/metadata', cardController.getCardMetadata);
 router.post('/:cardId/refresh', refreshLimiter, cardController.refreshCard);
@@ -29,6 +30,7 @@ router.post('/:cardId/tags', cardController.editTags);
 router.get('/:cardId/export', cardController.exportCard);
 router.post('/:cardId/push', cardController.pushToSillyTavern);
 router.post('/:cardId/push-to-architect', cardController.pushToArchitect);
+router.post('/:cardId/push-to-lumiverse', cardController.pushToLumiverse);
 
 // Asset routes
 router.get('/:cardId/assets/scan', assetController.scanAssets);

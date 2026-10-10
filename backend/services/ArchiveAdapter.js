@@ -1,12 +1,12 @@
 /**
  * Archive Platform Adapter
  *
- * Implements PlatformAdapter from @character-foundry/federation
+ * Implements PlatformAdapter from @character-foundry/character-foundry/federation
  */
 
 import fs from 'fs';
 import path from 'path';
-import { BasePlatformAdapter } from '@character-foundry/federation';
+import { BasePlatformAdapter } from '@character-foundry/character-foundry/federation';
 import { getDatabase } from '../database.js';
 import { readCardPngSpec, getCardFilePaths } from '../utils/card-utils.js';
 

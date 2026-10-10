@@ -2,9 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
-import { parseCard } from '@character-foundry/loader';
-import { deriveFeatures } from '@character-foundry/schemas';
-import { countImages } from '@character-foundry/image-utils';
+import { parseCard } from '@character-foundry/character-foundry/loader';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
+import { countImages } from '@character-foundry/character-foundry/image-utils';
 
 const log = logger.scoped('CARD-UTIL');
 
@@ -93,4 +93,4 @@ export function readCardPngSpec(cardId) {
 }
 
 // Old hasEmbeddedImages() and deriveFeatureFlagsFromSpec() functions removed.
-// Use countImages() from @character-foundry/image-utils and deriveFeatures() from @character-foundry/schemas instead.
+// Use countImages() from @character-foundry/character-foundry/image-utils and deriveFeatures() from @character-foundry/character-foundry/schemas instead.

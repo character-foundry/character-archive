@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { initDatabase, getDatabase } from '../backend/database.js';
 import { STATIC_DIR, getCardFilePaths, readCardPngSpec } from '../backend/utils/card-utils.js';
-import { deriveFeatures } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
 
 async function main() {
     await initDatabase();

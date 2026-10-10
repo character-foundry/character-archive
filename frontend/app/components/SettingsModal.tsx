@@ -1,5 +1,6 @@
 'use client';
 
+import { DirectConnectionsSettings } from './DirectConnectionsSettings';
 import { Fragment, type RefObject, useEffect, useState } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { X, Loader2, Save, Download, Settings, RefreshCw, Database, Search, User, Globe, FileJson } from 'lucide-react';
@@ -106,7 +107,7 @@ type SettingsModalProps = {
     cancelAllSyncs: () => void | Promise<void>;
 };
 
-type TabId = 'sync-control' | 'general' | 'silly' | 'ct' | 'chub' | 'vector' | 'risuai' | 'wyvern';
+type TabId = 'connections' | 'sync-control' | 'general' | 'silly' | 'ct' | 'chub' | 'vector' | 'risuai' | 'wyvern';
 
 export const SettingsModal = ({
     showSettings,
@@ -182,6 +183,7 @@ export const SettingsModal = ({
     const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
         { id: 'sync-control', label: 'Sync Control', icon: <RefreshCw className="h-4 w-4" /> },
         { id: 'general', label: 'General', icon: <Settings className="h-4 w-4" /> },
+        { id: 'connections', label: 'Connections & favorites', icon: <Globe className="h-4 w-4" /> },
         { id: 'silly', label: 'SillyTavern', icon: <Globe className="h-4 w-4" /> },
         { id: 'ct', label: 'Character Tavern', icon: <Database className="h-4 w-4" /> },
         { id: 'chub', label: 'Chub', icon: <User className="h-4 w-4" /> },
@@ -465,6 +467,9 @@ export const SettingsModal = ({
                                     </div>
                                 </div>
 
+                                <div className={clsx('space-y-6', activeTab !== 'connections' && 'hidden')}>
+                                    <DirectConnectionsSettings config={config} />
+                                </div>
                                 {/* Tab: SillyTavern */}
                                 <div className={clsx('space-y-6', activeTab !== 'silly' && 'hidden')}>
                                     <div className="space-y-3">

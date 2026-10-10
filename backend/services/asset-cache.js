@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { getDatabase } from '../database.js';
 import { readCardPngSpec } from '../utils/card-utils.js';
-import { isURLSafe, extractRemoteImageUrls } from '@character-foundry/image-utils';
+import { isURLSafe, extractRemoteImageUrls } from '@character-foundry/character-foundry/image-utils';
 import { logger } from '../utils/logger.js';
 
 const log = logger.scoped('ASSET-CACHE');
@@ -26,7 +26,7 @@ const ALLOWED_ASSET_DOMAINS = [
 
 /**
  * Check if a URL is allowed for asset download (SSRF protection)
- * Now using canonical implementation from @character-foundry/image-utils
+ * Now using canonical implementation from @character-foundry/character-foundry/image-utils
  */
 function isAssetUrlAllowed(urlString) {
     const result = isURLSafe(urlString, {
@@ -282,7 +282,7 @@ function extractGalleryItems(payload) {
 
 /**
  * Extract URLs from text (images, audio, video)
- * Now using canonical implementation from @character-foundry/image-utils
+ * Now using canonical implementation from @character-foundry/character-foundry/image-utils
  */
 function extractMediaUrls(text) {
     if (!text || typeof text !== 'string') return [];

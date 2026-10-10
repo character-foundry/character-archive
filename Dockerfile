@@ -1,40 +1,10 @@
-# docker build --build-context foundry=../character-foundry -t character-archive .
-
-FROM node:22-alpine AS packages
-WORKDIR /build
-RUN corepack enable && corepack prepare pnpm@11.20.0 --activate
-COPY --from=foundry package.json pnpm-lock.yaml ./
-COPY --from=foundry packages/core ./packages/core
-COPY --from=foundry packages/schemas ./packages/schemas
-COPY --from=foundry packages/image-utils ./packages/image-utils
-COPY --from=foundry packages/charx ./packages/charx
-COPY --from=foundry tsconfig.base.json ./tsconfig.base.json
-COPY docker/pnpm-foundry-workspace.yaml ./pnpm-workspace.yaml
-RUN node -e "const fs=require('fs');const p=require('./package.json');delete p.packageManager;fs.writeFileSync('package.json',JSON.stringify(p,null,2))" && \
-    pnpm install --frozen-lockfile
-
-WORKDIR /build/packages/core
-RUN pnpm run build
-WORKDIR /build/packages/schemas
-RUN pnpm run build
-WORKDIR /build/packages/image-utils
-RUN pnpm run build
-WORKDIR /build/packages/charx
-RUN pnpm run build
-
 FROM node:22-alpine AS backend-deps
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.20.0 --activate && \
     apk add --no-cache python3 py3-setuptools make g++
-COPY --from=packages /build/packages /packages
 COPY package.json pnpm-lock.yaml ./
-COPY docker/pnpm-backend-workspace.yaml ./pnpm-workspace.yaml
-RUN sed -i 's|"@character-foundry/image-utils": "workspace:\^"|"@character-foundry/image-utils": "file:/packages/image-utils"|' package.json && \
-    sed -i 's|"@character-foundry/schemas": "workspace:\^"|"@character-foundry/schemas": "file:/packages/schemas"|' package.json && \
-    node -e "const fs=require('fs');const p=require('./package.json');p.dependencies['@character-foundry/charx']='file:/packages/charx';fs.writeFileSync('package.json',JSON.stringify(p,null,2))" && \
-    sed -i 's|"workspace:\^"|"file:/packages/core"|' /packages/charx/package.json && \
-    sed -i 's|"@character-foundry/schemas": "file:/packages/core"|"@character-foundry/schemas": "file:/packages/schemas"|' /packages/charx/package.json
-RUN pnpm install --no-frozen-lockfile --prod && \
+COPY pnpm-workspace.yaml ./pnpm-workspace.yaml
+RUN pnpm install --frozen-lockfile --prod && \
     cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
     npm run build-release
 
@@ -50,12 +20,9 @@ RUN npm run build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 RUN apk add --no-cache sqlite wget tini
-COPY --from=packages /build/packages /packages
 COPY --from=backend-deps /app/node_modules ./node_modules
 COPY --from=backend-deps /app/package.json ./package.json
-RUN mkdir -p node_modules/@character-foundry && \
-    ln -sfn /packages/image-utils node_modules/@character-foundry/image-utils && \
-    node -e "Promise.all(['@character-foundry/charx', '@character-foundry/image-utils', '@character-foundry/schemas'].map((name) => import(name)))"
+RUN node -e "import('@character-foundry/character-foundry/loader')"
 COPY server.js config-loader.js ./
 COPY backend ./backend
 COPY scripts ./scripts
@@ -63,7 +30,7 @@ COPY --from=frontend-build /app/frontend/.next/standalone ./frontend
 COPY --from=frontend-build /app/frontend/.next/static ./frontend/.next/static
 COPY frontend/public ./frontend/public
 RUN chmod a+r package.json server.js config-loader.js && \
-    chmod -R a+rX /packages backend scripts frontend && \
+    chmod -R a+rX backend scripts frontend && \
     mkdir -p /state /app/static /app/data /app/backup
 
 ENV NODE_ENV=production \

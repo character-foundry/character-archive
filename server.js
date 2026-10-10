@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { appConfig as config } from './backend/services/ConfigState.js';
 import { schedulerService } from './backend/services/SchedulerService.js';
 import configRouter from './backend/routes/config.js';
+import { startFavoriteSync } from './backend/services/FavoriteSyncService.js';
 import { initDatabase } from './backend/database.js';
 import { configureSearchBackend, ensureVectorBackend } from './backend/services/SearchService.js';
 
@@ -141,6 +142,7 @@ app.use('/static', express.static(process.env.CHARACTER_ARCHIVE_STATIC_DIR || pa
 
 // Initialize database
 initDatabase();
+startFavoriteSync();
 configureSearchBackend(config);
 ensureVectorBackend().catch(error => {
     console.warn('[WARN] Failed to ensure vector embedders on startup:', error?.message || error);

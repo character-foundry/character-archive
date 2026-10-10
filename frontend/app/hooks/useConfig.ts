@@ -1,3 +1,4 @@
+import { readDirectConnectionSettings } from '../utils/directConnectionSettings';
 import { useState, useEffect, useCallback } from "react";
 import { fetchConfig as fetchConfigApi, updateConfig as updateConfigApi } from "@/lib/api";
 import type { Config } from "@/lib/types";
@@ -244,6 +245,7 @@ export function useConfig(): UseConfigResult {
         use_timeline: data.get("use_timeline") === "on",
         publicBaseUrl: getStringValue("publicBaseUrl", { trim: true }),
         sillyTavern: sillyConfig,
+        ...readDirectConnectionSettings(data, previousConfig),
         ctSync: ctConfig,
         risuAiSync: risuAiConfig,
         wyvernSync: wyvernConfig,

@@ -6,8 +6,6 @@ x-app: &app
   build:
     context: .
     dockerfile: Dockerfile
-    additional_contexts:
-      foundry: ../character-foundry
   environment: &app-environment
     NODE_ENV: production
     CHARACTER_ARCHIVE_STATE_DIR: /state

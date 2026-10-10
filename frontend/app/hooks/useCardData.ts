@@ -30,6 +30,8 @@ export function useCardData(
   const [vectorMeta, setVectorMeta] = useState<CardsResponse["vector"] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const displayedCardsRef = useRef(cards);
+  useEffect(() => { displayedCardsRef.current = cards; }, [cards]);
   const cardsAbortRef = useRef<AbortController | null>(null);
   const cardsRequestIdRef = useRef(0);
 
@@ -132,6 +134,34 @@ export function useCardData(
       }
     };
   }, []);
+
+  const favoriteIds = cards.map(card => card.id).join(',');
+  useEffect(() => {
+    if (!favoriteIds) return;
+    const controller = new AbortController();
+    const refresh = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const previous = new Map(displayedCardsRef.current.map(card => [String(card.id), card.favorited]));
+        const response = await fetch(`/api/cards/favorite-status?ids=${encodeURIComponent(favoriteIds)}`, { signal: controller.signal });
+        if (!response.ok) return;
+        const result = await response.json() as { cards: Array<{ id: string | number; favorited: number }> };
+        const favorites = new Map(result.cards.map(card => [String(card.id), card.favorited]));
+        setCards(current => {
+          let changed = false;
+          const updated = current.map(card => {
+            const favorite = favorites.get(String(card.id));
+            if (favorite === undefined || favorite === card.favorited || previous.get(String(card.id)) !== card.favorited) return card;
+            changed = true;
+            return { ...card, favorited: favorite };
+          });
+          return changed ? updated : current;
+        });
+      } catch { /* A failed poll leaves the locally displayed favorite intact. */ }
+    };
+    const timer = setInterval(() => { void refresh(); }, 15000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [favoriteIds]);
 
   return {
     cards,

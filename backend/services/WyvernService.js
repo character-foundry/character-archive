@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDatabase, upsertCard } from '../database.js';
 import { logger } from '../utils/logger.js';
-import { deriveFeatures } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
 import { rateLimitedRequest } from './ApiClient.js';
 import { inferTags } from '../utils/keyword-tagger.js';
 

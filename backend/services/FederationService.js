@@ -1,7 +1,7 @@
 /**
  * Federation Service
  *
- * Thin wrapper around @character-foundry/federation package.
+ * Thin wrapper around @character-foundry/character-foundry/federation package.
  * The package does the work - this just configures it.
  */
 
@@ -12,7 +12,7 @@ import {
     createActor,
     enableFederation,
     isFederationEnabled,
-} from '@character-foundry/federation';
+} from '@character-foundry/character-foundry/federation';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
