@@ -10,7 +10,7 @@ import { loadConfig } from '../config-loader.js';
 import { logger } from '../backend/utils/logger.js';
 import { LanceSearchBackend } from '../backend/services/search/LanceSearchBackend.js';
 import { parseVectorEtlResult, validateVectorEtlResult } from './vector-etl-contract.js';
-import { drainDecision, shouldPauseForArchiveSync } from './vector-worker-policy.js';
+import { drainDecision, shouldPauseForArchiveSync, isTransientVectorFailure } from './vector-worker-policy.js';
 
 const log = logger.scoped('VECTOR:WORKER');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -182,11 +182,15 @@ function runEtl(items, generation, config) {
         });
         activeChild = child;
         let stdout = '';
+        let stderr = '';
         child.stdout.on('data', chunk => {
             process.stdout.write(chunk);
             stdout = `${stdout}${chunk}`.slice(-1_000_000);
         });
-        child.stderr.on('data', chunk => process.stderr.write(chunk));
+        child.stderr.on('data', chunk => {
+            process.stderr.write(chunk);
+            stderr = `${stderr}${chunk}`.slice(-16000);
+        });
         const clearActiveChild = () => {
             if (activeChild === child) activeChild = null;
             if (forceKillTimer) clearTimeout(forceKillTimer);
@@ -199,7 +203,7 @@ function runEtl(items, generation, config) {
         child.once('exit', (code, signal) => {
             clearActiveChild();
             if (code !== 0) {
-                reject(new Error(`Vector ETL exited ${code}${signal ? ` (${signal})` : ''}`));
+                reject(new Error(`Vector ETL exited ${code}${signal ? ` (${signal})` : ''}: ${stderr}`));
                 return;
             }
             try {
@@ -286,9 +290,7 @@ async function tick() {
                 });
                 try {
                     const stats = await lance.optimizeVector({
-                        tableName: generation.cards_index,
-                        cleanupOlderThan: new Date(),
-                        deleteUnverified: true
+                        tableName: generation.cards_index
                     });
                     lanceBatchesSinceOptimize = 0;
                     log.info(`Optimized LanceDB vector table ${generation.cards_index}`, stats);
@@ -309,7 +311,12 @@ async function tick() {
             log.info(`Released ${released} vector work items during shutdown`);
             return false;
         }
-        generations.failItems(items.map(item => item.id), error, { maxAttempts: 5 });
+        if (isTransientVectorFailure(error)) {
+            generations.releaseItems(items.map(item => item.id));
+            circuitOpenUntil = Date.now() + 60000;
+        } else {
+            generations.failItems(items.map(item => item.id), error, { maxAttempts: 5 });
+        }
         consecutiveFailures += 1;
         if (consecutiveFailures >= 3) circuitOpenUntil = Date.now() + 60000;
         log.error(`Vector batch failed for generation ${generation.id}`, error);

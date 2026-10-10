@@ -245,7 +245,7 @@ To ensure your archive is truly offline:
     ```bash
     curl -X POST http://127.0.0.1:6969/api/vector/reconcile \
       -H 'content-type: application/json' -d '{}'
-    pnpm worker:vector
+    pnpm worker:vector:drain
     ```
     Set `embeddingProvider` to `ollama` or `openai`, and set `embeddingUrl`, `embeddingApiKey`, and `embedModel` for that endpoint. Instruction-aware retrieval models can set `queryInstruction`; it is applied to searches only, never to indexed card documents. `ollamaUrl` remains supported for older configs.
 
@@ -315,3 +315,20 @@ Lumiverse accepts a session bearer token or the session cookie copied from your 
 **Character Architect** sends the PNG directly and records a link between the two cards. Stars and unstars on linked cards reconcile every 15 seconds while Archive runs. Changes persist locally during an outage and reconcile when the other app returns. No federation setup is needed.
 
 Favorites always save locally, without waiting for Chub or gallery downloads. **Also sync favorite changes to Chub** is off by default and can be enabled separately. Existing favorites are retained.
+
+### Search maintenance and embedding recovery
+
+The default Compose stack runs a continuous vector worker and search-maintenance
+worker. New embedding jobs are processed automatically; temporary network errors,
+rate limits, and server outages pause processing without consuming a card's retry
+budget. Permanent failures still become dead jobs after five attempts and are
+visible at `/api/vector/status`. Run `pnpm worker:vector:drain` for a finite snapshot
+instead of the continuous worker.
+
+Search maintenance compacts the lexical LanceDB table and updates its full-text
+index every 30 minutes (`SEARCH_MAINTENANCE_INTERVAL_MS`). Run `pnpm search:maintain`
+for immediate maintenance. Search results and filtered counts are cached for up
+to one minute, including concurrent requests; live integration status remains
+independent. Query embeddings are cached separately for five minutes, so changing
+filters or refreshing candidates does not repeat inference for the same query.
+Fresh query embedding requests have a 15-second timeout. LanceDB readers check for changes from other workers every second.

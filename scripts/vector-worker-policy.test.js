@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { drainDecision, shouldPauseForArchiveSync } from './vector-worker-policy.js';
+import { drainDecision, shouldPauseForArchiveSync, isTransientVectorFailure } from './vector-worker-policy.js';
 
 test('LanceDB indexing continues while an archive sync is active', () => {
     assert.equal(shouldPauseForArchiveSync({ provider: 'lancedb' }), false);
@@ -31,4 +31,13 @@ test('drain mode exits at a completed snapshot and reports a bounded timeout', (
         generation: { status: 'failed', dead_items: 1 }
     }), 'failed');
     assert.equal(drainDecision({ enabled: true, deadlineReached: true }), 'timeout');
+});
+
+test('temporary embedding outages do not consume the permanent failure budget', () => {
+    for (const message of ['fetch failed', 'ECONNREFUSED', 'TimeoutError: timed out', 'openai embedding request failed: 503 offline', 'openai embedding request failed: 429 rate limit']) {
+        assert.equal(isTransientVectorFailure(new Error(message)), true, message);
+    }
+    for (const message of ['Embedding dimension mismatch', 'openai embedding request failed: 400 invalid input', 'openai embedding request failed: 401 unauthorized', 'Vector ETL contract mismatch']) {
+        assert.equal(isTransientVectorFailure(new Error(message)), false, message);
+    }
 });

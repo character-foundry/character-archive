@@ -1,6 +1,6 @@
 # Docker deployment
 
-The production stack separates the API, Next.js web UI, archive worker, and an opt-in vector worker. LanceDB runs embedded in the application containers; vector maintenance and Meilisearch each use optional Compose profiles. Every application container uses Node 22. Inference remains external; the stack does not start llama.cpp or copy model weights.
+The production stack separates the API, Next.js web UI, archive worker, a continuous vector worker, and a search-maintenance worker. LanceDB runs embedded in the application containers; lexical maintenance runs every 30 minutes, and Meilisearch uses an optional Compose profile. Every application container uses Node 22. Inference remains external; the stack does not start llama.cpp or copy model weights.
 
 Application containers run as `ARCHIVE_UID:ARCHIVE_GID` (default `1000:1000`) so files created in writable bind mounts remain readable by host-side backup and maintenance jobs. The immutable pnpm dependency tree is owned by root inside the image, so Compose adds root as a supplementary read-only group for dependency traversal; writes still use the configured primary UID and GID.
 
@@ -64,7 +64,7 @@ docker compose logs --tail=200 api web meilisearch
 1. Stop the process-compose API and the old sync/vector services so there is one writer.
 2. Stop the validation stack; its API is still reading `runtime/state/cards.db`.
 3. Take a final SQLite backup into `runtime/state/cards.db` and copy the final `config.json`.
-4. Start the API, web UI, and archive worker on the normal ports. Run vector work separately only when a finite generation or maintenance drain is intended.
+4. Start the default stack on the normal ports, including the continuous vector and search-maintenance workers.
 5. Compare card counts, source counts, lexical results, and vector status before removing the old service definitions.
 
 ```bash
@@ -82,6 +82,7 @@ The service memory ceilings are:
 | Web | 1 GiB |
 | Archive worker | 4 GiB |
 | Vector worker | 8 GiB |
+| Search maintenance | 4 GiB |
 | Meilisearch (optional profile) | 32 GiB, with a 24 GiB indexing budget |
 
 Container logs rotate at 25 MiB with four files. Meilisearch has no swap allowance beyond its 32 GiB cap.
@@ -107,7 +108,7 @@ docker compose run --rm archive-worker node scripts/repair-ct.js
 docker compose run --rm archive-worker node scripts/repair-ct.js --apply
 ```
 
-Create or resume a frozen shadow vector generation through `POST /api/vector/reconcile`, then explicitly run `docker compose --profile vector run --rm vector-worker`. New downloads do not extend a candidate generation. The worker defaults to one concurrent embedding request, drains the finite snapshot, exits on completion, and stops without restarting at `VECTOR_DRAIN_MAX_MINUTES` (six hours by default). Meilisearch pauses during archive sync by default and also pauses above 200 pending tasks. Set `VECTOR_PAUSE_DURING_SYNC` to explicitly override either provider policy. LanceDB builds its ANN index before completion. Generation activation requires a passing 120-query benchmark report and explicit approval. A Lance-only installation uses absolute quality floors; `--baseline` additionally compares it with an existing Meilisearch generation.
+Create or resume a frozen shadow vector generation through `POST /api/vector/reconcile`, then let the continuous worker process it, or use `docker compose run --rm vector-worker node scripts/vector-worker.js --drain` when the continuous worker is stopped. New downloads do not extend a candidate generation. The worker defaults to one concurrent embedding request and runs continuously, including after service outages. Temporary network failures, rate limits, and server errors pause it for one minute without exhausting per-card retries. Permanent failures still use a five-attempt limit. Explicit `--drain` mode freezes a finite snapshot, exits on completion, and stops at `VECTOR_DRAIN_MAX_MINUTES` (six hours by default). Meilisearch pauses during archive sync by default and also pauses above 200 pending tasks. Set `VECTOR_PAUSE_DURING_SYNC` to explicitly override either provider policy. LanceDB builds its ANN index before completion. Generation activation requires a passing 120-query benchmark report and explicit approval. A Lance-only installation uses absolute quality floors; `--baseline` additionally compares it with an existing Meilisearch generation.
 
 Review and edit the generated fixture before treating it as a quality gate. The benchmark also enforces absolute hit-rate, MRR, and top-one floors, but hand-written intent queries are more representative than card names or taglines.
 
