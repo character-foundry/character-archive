@@ -71,7 +71,12 @@ export async function refreshCard(cardId: string) {
   const res = await fetch(`${API_BASE}/api/cards/${cardId}/refresh`, {
     method: 'POST',
   });
-  if (!res.ok) throw new Error('Failed to refresh card');
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    throw new Error(typeof payload?.error === 'string' && payload.error
+      ? payload.error
+      : 'Failed to update card from source');
+  }
   return res.json();
 }
 

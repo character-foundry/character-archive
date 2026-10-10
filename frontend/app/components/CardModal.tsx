@@ -74,7 +74,7 @@ type CardModalProps = {
     getChubUrl: (card: Card) => string | null;
     refreshStatus: RefreshStatus;
     toggleFavoriteCard: (card: Card) => void;
-    handleRefreshCard: (card: Card) => void;
+    handleRefreshCard: (card: Card, mode?: "local" | "source") => void;
     refreshingCardId: string | null;
     handleDownload: (card: Card) => void;
     handlePushToSilly: (card: Card) => void;

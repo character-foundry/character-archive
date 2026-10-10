@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, Download, Globe, Heart, Loader2, RefreshCw, Send } from 'lucide-react';
+import { CloudDownload, Copy, Download, Globe, Heart, Loader2, RefreshCw, Send } from 'lucide-react';
 import clsx from 'clsx';
 import type { Card } from '@/lib/types';
 
@@ -10,7 +10,7 @@ interface CardDetailActionsProps {
   canPushToSilly: boolean;
   canPushToArchitect: boolean;
   onFavorite: (card: Card) => void;
-  onRefresh: (card: Card) => void;
+  onRefresh: (card: Card, mode?: 'local' | 'source') => void;
   onDownload: (card: Card) => void;
   onPushToSilly: (card: Card) => void;
   onPushToArchitect: (card: Card) => void;
@@ -83,8 +83,8 @@ export function CardDetailActions({
         type="button"
         onClick={() => onRefresh(card)}
         disabled={refreshing}
-        title={refreshing ? 'Updating card…' : 'Update card'}
-        aria-label="Update card"
+        title="Reload saved card"
+        aria-label="Reload saved card"
         className={`${buttonClass} ${neutralClass} w-8`}
       >
         {refreshing ? (
@@ -92,6 +92,16 @@ export function CardDetailActions({
         ) : (
           <RefreshCw className="h-4 w-4" />
         )}
+      </button>
+      <button
+        type="button"
+        onClick={() => onRefresh(card, 'source')}
+        disabled={refreshing}
+        title="Update from source"
+        aria-label="Update from source"
+        className={`${buttonClass} ${neutralClass} w-8`}
+      >
+        <CloudDownload className="h-4 w-4" />
       </button>
       <button
         type="button"

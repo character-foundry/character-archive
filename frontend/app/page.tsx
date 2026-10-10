@@ -270,7 +270,7 @@ function HomeContent() {
   // Card actions wrappers
   const wrapToggleFavorite = (card: Card) => toggleFavoriteCard(card, { setCards, setSelectedCard, setCardDetails, setGalleryLoading, setGalleryMessage, setAssetCacheStatus });
   const wrapDeleteCard = (card: Card) => deleteCard(card, { setCards, setCount, setSelectedIds });
-  const wrapRefreshCard = (card: Card) => handleRefreshCard(card, loadCards, handleOpenCard);
+  const wrapRefreshCard = (card: Card, mode: "local" | "source" = "local") => handleRefreshCard(card, loadCards, handleOpenCard, mode);
   const wrapCacheAssets = (card: Card) => handleCacheAssets(card, { setAssetCacheStatus, setAssetCacheMessage });
   const wrapPushToSilly = (card: Card) => handlePushToSilly(card, canPushToSilly, () => wrapCacheAssets(card));
   const wrapPushToArchitect = (card: Card) => handlePushToArchitect(card, canPushToArchitect);

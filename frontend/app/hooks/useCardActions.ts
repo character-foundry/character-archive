@@ -46,7 +46,8 @@ interface UseCardActionsResult {
   handleRefreshCard: (
     card: Card,
     loadCards: () => Promise<any>,
-    openCardDetails: (card: Card) => Promise<void>
+    openCardDetails: (card: Card) => Promise<void>,
+    mode?: "local" | "source"
   ) => Promise<void>;
   handleBulkDelete: (
     selectedIds: string[],
@@ -224,19 +225,31 @@ export function useCardActions(): UseCardActionsResult {
   const handleRefreshCard = useCallback(async (
     card: Card,
     loadCards: () => Promise<any>,
-    openCardDetails: (card: Card) => Promise<void>
+    openCardDetails: (card: Card) => Promise<void>,
+    mode: "local" | "source" = "local"
   ) => {
     setRefreshingCardId(card.id);
     setRefreshStatus(null);
     try {
-      await refreshCardApi(card.id);
-      const response = await loadCards();
-      const updatedCard = response?.cards?.find((c: Card) => c.id === card.id) || card;
+      let updatedCard = card;
+      if (mode === "source") {
+        await refreshCardApi(card.id);
+        const response = await loadCards();
+        updatedCard = response?.cards?.find((c: Card) => c.id === card.id) || card;
+      }
       await openCardDetails(updatedCard);
-      setRefreshStatus({ cardId: card.id, type: "success", message: "Card refreshed" });
-    } catch (err: any) {
+      setRefreshStatus({
+        cardId: card.id,
+        type: "success",
+        message: mode === "source" ? "Updated from source" : "Reloaded saved card",
+      });
+    } catch (err) {
       console.error(err);
-      setRefreshStatus({ cardId: card.id, type: "error", message: err.message || "Failed to refresh card" });
+      setRefreshStatus({
+        cardId: card.id,
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to reload card",
+      });
     } finally {
       setRefreshingCardId(null);
     }
@@ -292,14 +305,14 @@ export function useCardActions(): UseCardActionsResult {
       setRefreshStatus({
         cardId: selectedIds[selectedIds.length - 1],
         type: "success",
-        message: `Refreshed ${selectedIds.length} ${countLabel}`,
+        message: `Updated ${selectedIds.length} ${countLabel} from source`,
       });
     } catch (err: any) {
       console.error(err);
       setRefreshStatus({
         cardId: selectedIds[0],
         type: "error",
-        message: err?.message || "Failed to refresh selected cards",
+        message: err?.message || "Failed to update selected cards from source",
       });
     } finally {
       setBulkRefreshing(false);
