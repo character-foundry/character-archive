@@ -5,7 +5,7 @@
  */
 
 import express from 'express';
-import { parseActivity, cardFromActivityPub } from '@character-foundry/federation';
+import { parseActivity, cardFromActivityPub } from '@character-foundry/character-foundry/federation';
 import { getActor, syncEngine, baseUrl, getRemoteCardNames } from '../services/FederationService.js';
 import { archiveAdapter } from '../services/ArchiveAdapter.js';
 import { getDatabase } from '../database.js';

@@ -6,10 +6,10 @@ import { load as cheerioLoad } from 'cheerio';
 import extractChunks from 'png-chunks-extract';
 import encodeChunks from 'png-chunks-encode';
 import textChunk from 'png-chunk-text';
-import { readCardJsonOnly, readCharX } from '@character-foundry/charx';
+import { readCardJsonOnly, readCharX } from '@character-foundry/character-foundry/charx';
 import { getDatabase, upsertCard } from '../database.js';
 import { logger } from '../utils/logger.js';
-import { deriveFeatures } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
 import { addToBlacklist, isBlacklisted, loadBlacklist, rateLimitedRequest } from './ApiClient.js';
 import { inferTags } from '../utils/keyword-tagger.js';
 
@@ -197,7 +197,7 @@ function embedJsonInPng(pngBuffer, key, base64Value) {
 
 /**
  * Extract JSON and asset count from CharX (zip) file
- * Uses @character-foundry/charx which handles standard zips, SFX, and JPEG+ZIP hybrids
+ * Uses @character-foundry/character-foundry/charx which handles standard zips, SFX, and JPEG+ZIP hybrids
  * @returns {{ card: object, assetCount: number } | null}
  */
 function extractFromCharX(charxBuffer) {
@@ -643,7 +643,7 @@ async function processRisuCard(node, config = {}) {
         log.info(`Trying PNG for ${risuId}`);
         const pngResult = await fetchRisuPngV3(risuId);
         if (!pngResult.error && pngResult.buffer) {
-            const { parseCard } = await import('@character-foundry/loader');
+            const { parseCard } = await import('@character-foundry/character-foundry/loader');
             try {
                 const parsed = parseCard(pngResult.buffer, `${risuId}.png`);
                 if (parsed && parsed.card) {

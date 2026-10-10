@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDatabase } from '../database.js';
 import { readCardPngSpec, getCardFilePaths } from '../utils/card-utils.js';
-import { deriveFeatures } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
 import { resolveTokenCountsFromMetadata, extractTokenCountLabel, normalizeTokenCounts } from '../utils/token-counts.js';
 import { appConfig } from '../services/ConfigState.js'; // if needed
 import { logger } from '../utils/logger.js';

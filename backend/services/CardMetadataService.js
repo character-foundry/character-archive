@@ -10,7 +10,7 @@
 import fs from 'fs';
 import { getDatabase } from '../database.js';
 import { readCardPngSpec, getCardFilePaths } from '../utils/card-utils.js';
-import { deriveFeatures } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
 import { logger } from '../utils/logger.js';
 
 const log = logger.scoped('CARD-META');

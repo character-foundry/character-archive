@@ -177,6 +177,8 @@ export interface Config {
     chunkWeight?: number;
     rrfK?: number;
   };
+  syncFavoritesToChub?: boolean;
+  lumiverse?: { enabled: boolean; baseUrl: string; sessionToken?: string; sessionCookie?: string };
   characterArchitect?: {
     enabled?: boolean;
     url: string;

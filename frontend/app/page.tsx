@@ -83,6 +83,14 @@ function HomeContent() {
   const savedSearchesManager = useSavedSearches();
   const { savedSearches, handleSaveSearch, applySavedSearch, removeSavedSearch } = savedSearchesManager;
 
+  useEffect(() => {
+    if (!selectedCard) return;
+    const current = cards.find(card => card.id === selectedCard.id);
+    if (current && current.favorited !== selectedCard.favorited) {
+      setSelectedCard(previous => previous ? { ...previous, favorited: current.favorited } : previous);
+    }
+  }, [cards, selectedCard, setSelectedCard]);
+
   // Lightbox
   const lightbox = useLightbox(galleryAssets, selectedCard?.id);
 

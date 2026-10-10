@@ -2,6 +2,7 @@ import fs from 'fs';
 import extractChunks from 'png-chunks-extract';
 import encodeChunks from 'png-chunks-encode';
 import textChunk from 'png-chunk-text';
+import sharp from 'sharp';
 import { logger } from './logger.js';
 
 const log = logger.scoped('PNG-UTIL');
@@ -15,13 +16,26 @@ export function embedCardDefinition(pngBuffer, definition) {
         if (!['tEXt', 'zTXt', 'iTXt'].includes(chunk.name)) return true;
         const data = Buffer.from(chunk.data);
         const separator = data.indexOf(0);
-        return !cardKeys.has(data.subarray(0, separator).toString('latin1'));
+        return !cardKeys.has(data.subarray(0, separator).toString('latin1').toLowerCase());
     });
     const endIndex = chunks.findIndex(chunk => chunk.name === 'IEND');
     if (endIndex < 1) throw new Error('Cannot embed character data in an incomplete PNG');
     const payload = Buffer.from(JSON.stringify(definition), 'utf8').toString('base64');
     chunks.splice(endIndex, 0, textChunk.encode('chara', payload));
     return Buffer.from(encodeChunks(chunks));
+}
+
+/** Build a downloadable card from an avatar, which may be JPEG/WebP despite its filename. */
+export async function createCardPng(imageBuffer, definition) {
+    if (!definition?.data || !['chara_card_v2', 'chara_card_v3'].includes(definition.spec)) {
+        throw new Error('Cannot export PNG without a character card definition');
+    }
+    const image = Buffer.from(imageBuffer);
+    // Preserve PNG image/asset chunks; re-encoding with sharp would strip them.
+    const png = image.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+        ? image
+        : await sharp(image).png().toBuffer();
+    return embedCardDefinition(png, definition);
 }
 
 /**

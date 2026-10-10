@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDatabase, getDatabase, upsertCard } from '../backend/database.js';
-import { deriveFeatures } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

@@ -31,16 +31,7 @@ This project allows you to mirror character cards from multiple sources ([Chub.a
 
 ### Dependencies
 
-This project uses the `@character-foundry` package suite for character card parsing and features:
-
-*   `@character-foundry/loader` - Parse character cards from PNG, JSON, CharX formats
-*   `@character-foundry/schemas` - Zod schemas for CCv2/CCv3 validation and feature derivation (workspace dependency)
-*   `@character-foundry/image-utils` - URL extraction and SSRF protection (workspace dependency)
-*   `@character-foundry/federation` - ActivityPub federation support
-*   `@character-foundry/exporter` - Export cards to PNG, CharX, Voxta formats
-*   `@character-foundry/core` - Shared utilities and error types
-
-**Note:** Some packages (`@character-foundry/schemas`, `@character-foundry/image-utils`) use pnpm workspace protocol and require the character-foundry monorepo as a sibling directory. Others are available on public npm.
+Character Archive uses `@character-foundry/character-foundry@0.6.0` from public npm. Its `/loader`, `/schemas`, `/charx`, `/image-utils`, and `/integrations` exports provide the shared primitives. A sibling Foundry checkout is no longer required.
 
 ---
 
@@ -48,13 +39,7 @@ This project uses the `@character-foundry` package suite for character card pars
 
 ### 1. Prerequisites
 
-Character Archive requires the character-foundry monorepo as a sibling directory:
-
-```
-/your-workspace/
-  character-foundry/    # Monorepo with shared packages
-  character-archive/    # This application
-```
+Install Node.js 22 and the pnpm version pinned in `package.json`.
 
 ### 2. Installation
 Clone the repository and install dependencies:
@@ -156,11 +141,10 @@ pnpm prod
 Run Character Archive with embedded LanceDB using Docker Compose:
 
 ```bash
-# From parent directory containing both character-archive/ and character-foundry/
-cd /path/to/character-foundry
+# From the Character Archive checkout
+cd /path/to/character-archive
 
 # Set up environment
-cd character-archive
 cp .env.example .env
 mkdir -p runtime/state static data backup data.ms dumps snapshots
 touch \
@@ -309,7 +293,7 @@ pnpm dev 2>&1 | grep '\[SYNC\]'
     If the app crashes complaining about config, ensure `config.json` exists and contains valid JSON. Validate your API keys.
 
 *   **Workspace Dependency Errors:**
-    If you see errors about `@character-foundry/schemas` or `@character-foundry/image-utils`, ensure the character-foundry monorepo is available as a sibling directory and run `pnpm install` again.
+    Run `pnpm install --frozen-lockfile` to install the released aggregate package from public npm.
 
 ---
 
@@ -321,6 +305,16 @@ pnpm dev 2>&1 | grep '\[SYNC\]'
 *   **Embedded search:** `search.lance/` - LanceDB lexical and vector tables.
 
 **Note:** All user data is git-ignored. You can safely pull updates to the code without overwriting your library.
+
+### Direct connections and local favorites
+
+Open **Settings → Connections & favorites** to set the Character Architect API URL (usually port 3456) or your Lumiverse URL. Addresses must be reachable from the Archive server; inside Docker, `localhost` refers to that container. Use the test buttons before saving.
+
+Lumiverse accepts a session bearer token or the session cookie copied from your browser’s developer tools. Passwordless LAN instances need neither. A 401 means the session needs refreshing. Click **Lumiverse** in a card’s details to send its PNG and definition.
+
+**Character Architect** sends the PNG directly and records a link between the two cards. Stars and unstars on linked cards reconcile every 15 seconds while Archive runs. Changes persist locally during an outage and reconcile when the other app returns. No federation setup is needed.
+
+Favorites always save locally, without waiting for Chub or gallery downloads. **Also sync favorite changes to Chub** is off by default and can be enabled separately. Existing favorites are retained.
 
 ### Search maintenance and embedding recovery
 
