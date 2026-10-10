@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3177",
     "lint": "eslint",
-    "test:url": "npm_config_cache=./.npm-cache tsx app/utils/urlCard.test.ts"
+    "test:url": "npm_config_cache=./.npm-cache tsx app/utils/urlCard.test.ts",
+    "test:card-details": "tsx --test app/hooks/cardDetailPayload.test.ts"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",

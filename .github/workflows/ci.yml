@@ -29,6 +29,10 @@ jobs:
         working-directory: character-archive
       - run: >-
           npx eslint
+          app/components/CardDetailActions.tsx
+          app/components/BulkActionBar.tsx
+          app/hooks/cardDetailPayload.ts
+          app/hooks/cardDetailPayload.test.ts
           app/components/PaginationHeader.tsx
           app/components/SettingsModal.tsx
           app/hooks/useConfig.ts
@@ -40,6 +44,8 @@ jobs:
       - run: npm run build --prefix frontend
         working-directory: character-archive
       - run: npm test
+        working-directory: character-archive
+      - run: npm run test:card-details --prefix frontend
         working-directory: character-archive
       - run: npm run test:url --prefix frontend
         working-directory: character-archive

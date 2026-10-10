@@ -1,10 +1,10 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import {
-  fetchCardMetadata,
   fetchCardGallery,
   getCachedAssets,
 } from "@/lib/api";
 import type { Card, GalleryAsset, CachedAsset } from "@/lib/types";
+import { getDefinitionData, getEmbeddedDefinitionData, loadCardDetailPayload } from "./cardDetailPayload";
 
 interface CardDetails {
   metadata: Record<string, any> | null;
@@ -134,8 +134,8 @@ export function useCardDetails(
 
     const request = (async () => {
       try {
-      const [metadata, galleryResult] = await Promise.all([
-        fetchCardMetadata(card.id).catch(() => null),
+      const [{ metadata, pngInfo }, galleryResult] = await Promise.all([
+        loadCardDetailPayload(card.id),
         shouldFetchGallery
           ? fetchCardGallery(card.id).catch(err => ({
               success: false,
@@ -190,7 +190,7 @@ export function useCardDetails(
 
       setCardDetails({
         metadata: metadata && metadataFlags ? { ...metadata, ...metadataFlags } : metadata,
-        pngInfo: null,
+        pngInfo,
         gallery: galleryAssets,
         galleryError,
       });
@@ -220,17 +220,9 @@ export function useCardDetails(
   }, []);
 
   // Computed values
-  const pngData = cardDetails.pngInfo?.data?.data ?? null;
+  const pngData = useMemo(() => getEmbeddedDefinitionData(cardDetails.pngInfo), [cardDetails.pngInfo]);
 
-  const definitionData = useMemo(() => {
-    const metadata = cardDetails.metadata as any;
-    if (metadata?.definition?.data) return metadata.definition.data as Record<string, any>;
-    if (metadata?.data && typeof metadata.data === "object") return metadata.data as Record<string, any>;
-    if (metadata?.definition && typeof metadata.definition === "object") {
-      return metadata.definition as Record<string, any>;
-    }
-    return null;
-  }, [cardDetails.metadata]);
+  const definitionData = useMemo(() => getDefinitionData(cardDetails.metadata), [cardDetails.metadata]);
 
   const resolveTextField = useCallback((key: string) => {
     const pickValue = (source: Record<string, any> | null | undefined) => {
