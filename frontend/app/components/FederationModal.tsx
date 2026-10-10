@@ -10,21 +10,15 @@ import type { FederationPlatform } from '@/lib/types';
 interface FederationModalProps {
   show: boolean;
   onClose: () => void;
+  onOpenConnections: () => void;
 }
 
 const PLATFORM_ICONS: Record<string, typeof Cloud> = {
-  architect: Server,
   sillytavern: Cloud,
   hub: Globe,
 };
 
 const PLATFORM_COLORS: Record<string, { bg: string; border: string; text: string; ring: string }> = {
-  architect: {
-    bg: 'bg-indigo-50 dark:bg-indigo-900/20',
-    border: 'border-indigo-200 dark:border-indigo-800',
-    text: 'text-indigo-600 dark:text-indigo-400',
-    ring: 'focus:ring-indigo-200',
-  },
   sillytavern: {
     bg: 'bg-emerald-50 dark:bg-emerald-900/20',
     border: 'border-emerald-200 dark:border-emerald-800',
@@ -40,12 +34,11 @@ const PLATFORM_COLORS: Record<string, { bg: string; border: string; text: string
 };
 
 const PLATFORM_PLACEHOLDERS: Record<string, string> = {
-  architect: 'http://localhost:3000',
   sillytavern: 'http://localhost:8000',
   hub: 'https://cardshub.example.com',
 };
 
-export function FederationModal({ show, onClose }: FederationModalProps) {
+export function FederationModal({ show, onClose, onOpenConnections }: FederationModalProps) {
   const {
     platforms,
     loading,
@@ -315,9 +308,14 @@ export function FederationModal({ show, onClose }: FederationModalProps) {
                 )}
 
                 <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
-                  Configure connections to sync cards between Character Archive and other platforms.
-                  Enable a platform and provide its URL to start syncing.
+                  Configure platforms that use federation to receive cards from Archive.
                 </p>
+
+                <section className="mb-6 space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-800 dark:bg-indigo-900/20">
+                  <h3 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-white"><Server className="h-5 w-5" />Character Architect</h3>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">Sending cards to Architect and syncing their favorites use the instance URL in Connections &amp; favorites.</p>
+                  <button onClick={onOpenConnections} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Open Connections &amp; favorites</button>
+                </section>
 
                 {loading && platforms.length === 0 ? (
                   <div className="flex items-center justify-center py-12">
@@ -325,7 +323,7 @@ export function FederationModal({ show, onClose }: FederationModalProps) {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {platforms.map(renderPlatformCard)}
+                    {platforms.filter(platform => platform.platform !== 'architect').map(renderPlatformCard)}
                   </div>
                 )}
 
@@ -333,7 +331,6 @@ export function FederationModal({ show, onClose }: FederationModalProps) {
                   <div className="mt-6 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50">
                     <h4 className="font-medium text-slate-700 dark:text-slate-300 mb-2">Quick Tips</h4>
                     <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
-                      <li>• <strong>Character Architect:</strong> Point to your CA instance for editing cards</li>
                       <li>• <strong>SillyTavern:</strong> Requires the CForge plugin installed</li>
                       <li>• <strong>CardsHub:</strong> Coming soon - public card sharing</li>
                     </ul>

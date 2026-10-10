@@ -27,6 +27,8 @@ type VectorStatus = {
 type SettingsModalProps = {
     showSettings: boolean;
     setShowSettings: (show: boolean) => void;
+    activeTab: SettingsTab;
+    setActiveTab: (tab: SettingsTab) => void;
     config: Config | null;
     handleSaveConfig: (e: React.FormEvent<HTMLFormElement>) => void;
     configLoading: boolean;
@@ -107,11 +109,13 @@ type SettingsModalProps = {
     cancelAllSyncs: () => void | Promise<void>;
 };
 
-type TabId = 'connections' | 'sync-control' | 'general' | 'silly' | 'ct' | 'chub' | 'vector' | 'risuai' | 'wyvern';
+export type SettingsTab = 'connections' | 'sync-control' | 'general' | 'silly' | 'ct' | 'chub' | 'vector' | 'risuai' | 'wyvern';
 
 export const SettingsModal = ({
     showSettings,
     setShowSettings,
+    activeTab,
+    setActiveTab,
     config,
     handleSaveConfig,
     configLoading,
@@ -141,7 +145,6 @@ export const SettingsModal = ({
     latestSyncRun,
     cancelAllSyncs,
 }: SettingsModalProps) => {
-    const [activeTab, setActiveTab] = useState<TabId>('sync-control');
     const [vectorStatus, setVectorStatus] = useState<VectorStatus | null>(null);
     const [vectorAction, setVectorAction] = useState<MessageStatus>(null);
 
@@ -180,7 +183,7 @@ export const SettingsModal = ({
         }
     };
 
-    const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
+    const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
         { id: 'sync-control', label: 'Sync Control', icon: <RefreshCw className="h-4 w-4" /> },
         { id: 'general', label: 'General', icon: <Settings className="h-4 w-4" /> },
         { id: 'connections', label: 'Connections & favorites', icon: <Globe className="h-4 w-4" /> },

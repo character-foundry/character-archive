@@ -25,8 +25,8 @@ export function DirectConnectionsSettings({ config }: { config: Config | null })
   return <div className="space-y-6">
     <section className="space-y-3">
       <h3 className="font-semibold">Character Architect</h3>
-      <label className="block">Instance URL<input className={inputClass} name="architect_url" type="url" defaultValue={config?.characterArchitect?.url || ''} placeholder="http://localhost:3456" /></label>
-      <p className="text-sm text-slate-500">Use the Architect API address reachable from Archive. Sending a card links it; stars and unstars then sync automatically every 15 seconds, including after either app comes back online.</p>
+      <label className="block">Instance URL<input className={inputClass} name="architect_url" type="url" defaultValue={config?.characterArchitect?.url || ''} placeholder="https://architect.example.com" /></label>
+      <p className="text-sm text-slate-500">Use the Architect address reachable from Archive. Starring a card sends it to Architect automatically. Stars and unstars then sync every 15 seconds, with retries when either app comes back online.</p>
       <button className="rounded border px-3 py-2" type="button" disabled={testing} onClick={e => testConnection('architect', e.currentTarget)}>Test Architect connection</button>
     </section>
     <section className="space-y-3">
@@ -40,7 +40,7 @@ export function DirectConnectionsSettings({ config }: { config: Config | null })
     </section>
     <section className="space-y-3">
       <h3 className="font-semibold">Favorites</h3>
-      <p className="text-sm text-slate-500">Favorites always save in Archive. Linked Architect cards sync without a Chub account.</p>
+      <p className="text-sm text-slate-500">Favorites always save in Archive. New stars send cards to your configured Architect instance without a Chub account. Removing a star keeps the card in both apps.</p>
       <label className="flex gap-2"><input type="checkbox" name="syncFavoritesToChub" defaultChecked={config?.syncFavoritesToChub === true} />Also sync favorite changes to Chub</label>
     </section>
     {status && <p role="status">{status}</p>}
