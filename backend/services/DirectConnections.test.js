@@ -14,6 +14,7 @@ after(() => fs.rmSync(directory, { recursive: true, force: true }));
 const { appConfig } = await import('./ConfigState.js');
 const { reconcileFavorites } = await import('./FavoriteSyncService.js');
 const { cardController } = await import('../controllers/CardController.js');
+const { testDirectConnection } = await import('./DirectConnectionsService.js');
 
 function response() {
   return { statusCode: 200, body: null, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
@@ -51,7 +52,7 @@ test('Archive uploads to Lumiverse with session credentials and validates its re
   t.mock.method(fs, 'existsSync', name => name.endsWith('.png'));
   t.mock.method(fs, 'readFileSync', () => Buffer.from('PNG fixture'));
   t.mock.method(axios, 'post', async (url, body, options) => {
-    assert.equal(url, 'http://lumiverse:7860/app/api/characters/import');
+    assert.equal(url, 'http://lumiverse:7860/app/api/v1/characters/import');
     assert.equal(options.headers.Cookie, 'session=test');
     assert.equal(options.maxRedirects, 0);
     assert.ok(body.getBuffer().includes(Buffer.from('name="file"')));
@@ -61,6 +62,18 @@ test('Archive uploads to Lumiverse with session credentials and validates its re
   await cardController.pushToLumiverse({ params: { cardId: '92' } }, res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.remoteId, 'lumi-92');
+});
+
+test('Lumiverse tests use its versioned API for root, API, and versioned URLs', async t => {
+  const urls = [];
+  t.mock.method(axios, 'get', async url => {
+    urls.push(url);
+    return { data: { data: [], total: 0 } };
+  });
+  for (const suffix of ['', '/api/', '/api/v1/']) {
+    await testDirectConnection('lumiverse', { baseUrl: `http://lumiverse:7861/proxy${suffix}` });
+  }
+  assert.deepEqual(urls, Array(3).fill('http://lumiverse:7861/proxy/api/v1/characters?limit=1'));
 });
 
 test('Archive reports an expired Lumiverse session instead of claiming success', async t => {

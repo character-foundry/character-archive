@@ -11,7 +11,7 @@ import { PaginationHeader } from "./components/PaginationHeader";
 import { PaginationControls } from "./components/PaginationControls";
 import { BulkActionBar } from "./components/BulkActionBar";
 import { SyncStatus, PushNotification } from "./components/StatusBanners";
-import { SettingsModal } from "./components/SettingsModal";
+import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { FederationModal } from "./components/FederationModal";
 import { type SavedSearch, normalizeFilters } from "./types/filters";
 import { defaultSillyTavernState, defaultCtSyncState, defaultVectorSearchState, defaultWyvernSyncState } from "./types/config";
@@ -46,6 +46,7 @@ function HomeContent() {
   // Config management
   const configManager = useConfig();
   const { config, setConfig, showSettings, setShowSettings, loading: configLoading, saveStatus: configSaveStatus, saveConfig: handleSaveConfig } = configManager;
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('sync-control');
 
   // Filters management
   const filtersManager = useFilters(undefined, clearSelection);
@@ -529,6 +530,8 @@ function HomeContent() {
       <SettingsModal
         showSettings={showSettings}
         setShowSettings={setShowSettings}
+        activeTab={settingsTab}
+        setActiveTab={setSettingsTab}
         config={config}
         handleSaveConfig={handleSaveConfig}
         configLoading={configLoading}
@@ -566,6 +569,11 @@ function HomeContent() {
       <FederationModal
         show={showFederation}
         onClose={() => setShowFederation(false)}
+        onOpenConnections={() => {
+          setShowFederation(false);
+          setSettingsTab('connections');
+          setShowSettings(true);
+        }}
       />
     </div>
   );

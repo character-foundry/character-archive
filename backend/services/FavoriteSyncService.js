@@ -6,10 +6,12 @@ import { setCardFavoriteFlag } from './CardService.js';
 import { appConfig } from './ConfigState.js';
 import { invalidateCache } from './CardQueryService.js';
 import { logger } from '../utils/logger.js';
+import { uploadCardPng } from './DirectCardUpload.js';
 
 const log = logger.scoped('FAVORITES');
 let running = null;
 const initializedDatabases = new WeakSet();
+const uploads = new Map();
 
 export function ensureFavoriteTables(db = getDatabase()) {
     if (initializedDatabases.has(db)) return;
@@ -20,6 +22,11 @@ export function ensureFavoriteTables(db = getDatabase()) {
     CREATE TABLE IF NOT EXISTS architect_links (
         card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
         base_url TEXT NOT NULL, remote_id TEXT NOT NULL,
+        PRIMARY KEY (card_id, base_url)
+    );
+    CREATE TABLE IF NOT EXISTS architect_export_retries (
+        card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+        base_url TEXT NOT NULL, next_attempt_at INTEGER NOT NULL,
         PRIMARY KEY (card_id, base_url)
     );`);
     initializedDatabases.add(db);
@@ -62,12 +69,53 @@ export async function linkArchitectCard(cardId, baseUrl, remoteId) {
     if (!current.updatedAt) await saveFavorite(cardId, current.favorite);
 }
 
+/** Share one upload between automatic favorites and simultaneous manual sends. */
+export async function ensureArchitectCard(cardId, baseUrl) {
+    ensureFavoriteTables();
+    const apiUrl = instanceApiUrl(baseUrl, '').replace(/\/$/, '');
+    const existing = getDatabase().prepare('SELECT remote_id FROM architect_links WHERE card_id = ? AND base_url = ?').get(cardId, apiUrl);
+    if (existing) return existing.remote_id;
+    const key = `${apiUrl}:${cardId}`;
+    if (uploads.has(key)) return uploads.get(key);
+    const upload = (async () => {
+        const remoteId = await uploadCardPng(cardId, 'architect', { baseUrl: apiUrl });
+        await linkArchitectCard(cardId, apiUrl, remoteId);
+        return remoteId;
+    })().finally(() => uploads.delete(key));
+    uploads.set(key, upload);
+    return upload;
+}
+
+async function uploadPendingFavorites(baseUrl) {
+    const db = getDatabase();
+    // Explicit local stars are the durable queue. Existing source/Chub favorites
+    // are not bulk imported just because a connection was configured.
+    const pending = db.prepare(`SELECT f.card_id FROM local_favorites f
+        LEFT JOIN architect_links l ON l.card_id=f.card_id AND l.base_url=?
+        LEFT JOIN architect_export_retries r ON r.card_id=f.card_id AND r.base_url=?
+        WHERE f.favorite=1 AND l.card_id IS NULL AND COALESCE(r.next_attempt_at, 0) <= ?
+        ORDER BY f.updated_at LIMIT 20`).all(baseUrl, baseUrl, Date.now());
+    for (const { card_id: cardId } of pending) {
+        if (!readFavorite(cardId).favorite) continue;
+        try {
+            await ensureArchitectCard(cardId, baseUrl);
+        } catch (error) {
+            db.prepare(`INSERT INTO architect_export_retries VALUES (?, ?, ?)
+                ON CONFLICT(card_id, base_url) DO UPDATE SET next_attempt_at=excluded.next_attempt_at`)
+                .run(cardId, baseUrl, Date.now() + 60000);
+            log.warn(`Architect upload pending for card ${cardId}: ${error.message}`);
+            if (axios.isAxiosError(error) && (!error.response || error.response.status >= 500)) break;
+        }
+    }
+}
+
 export async function reconcileFavorites() {
     if (running) return running;
     running = (async () => {
         ensureFavoriteTables();
         if (!appConfig.characterArchitect?.url || appConfig.characterArchitect.enabled === false) return;
         const baseUrl = instanceApiUrl(appConfig.characterArchitect.url, '').replace(/\/$/, '');
+        await uploadPendingFavorites(baseUrl);
         const links = getDatabase().prepare('SELECT * FROM architect_links WHERE base_url = ?').all(baseUrl);
         for (let offset = 0; offset < links.length; offset += 200) {
             const batch = links.slice(offset, offset + 200);

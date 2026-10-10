@@ -308,11 +308,11 @@ pnpm dev 2>&1 | grep '\[SYNC\]'
 
 ### Direct connections and local favorites
 
-Open **Settings → Connections & favorites** to set the Character Architect API URL (usually port 3456) or your Lumiverse URL. Addresses must be reachable from the Archive server; inside Docker, `localhost` refers to that container. Use the test buttons before saving.
+Open **Settings → Connections & favorites** to set your Character Architect or Lumiverse instance URL. Architect's Docker web address normally uses port 8765 and proxies its API. Addresses must be reachable from the Archive server; inside Docker, `localhost` refers to that container. Use the test buttons before saving. The Architect shortcut in Federation Settings opens these same settings.
 
-Lumiverse accepts a session bearer token or the session cookie copied from your browser’s developer tools. Passwordless LAN instances need neither. A 401 means the session needs refreshing. Click **Lumiverse** in a card’s details to send its PNG and definition.
+Lumiverse accepts a session bearer token or the session cookie copied from your browser’s developer tools. Passwordless LAN instances need neither. A 401 means the session needs refreshing. Click **Lumiverse** in a card’s details to send its PNG and definition. Connections use Lumiverse's `/api/v1` endpoints and accept the instance root, `/api`, or `/api/v1` URL.
 
-**Character Architect** sends the PNG directly and records a link between the two cards. Stars and unstars on linked cards reconcile every 15 seconds while Archive runs. Changes persist locally during an outage and reconcile when the other app returns. No federation setup is needed.
+Starring a card in Archive automatically sends its PNG to your configured **Character Architect** instance and links the two cards. You can also send a card manually. Stars and unstars on linked cards reconcile every 15 seconds while Archive runs; removing a star keeps both copies of the card. Changes persist locally during an outage, and failed uploads retry after a minute. Concurrent sends share one upload. Historical Chub favorites are not bulk imported when you configure the connection; star a card locally to send it. No federation setup is needed.
 
 Favorites always save locally, without waiting for Chub or gallery downloads. **Also sync favorite changes to Chub** is off by default and can be enabled separately. Existing favorites are retained.
 
